@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -22,6 +22,8 @@ interface Profile {
   id: string;
   email: string;
   full_name: string;
+  job_title?: string | null;
+  avatar_url?: string | null;
   role: 'super_admin' | 'ceo' | 'manager' | 'employee' | 'admin' | 'user';
   department_id: string | null;
   status: 'pending' | 'approved' | 'blocked';
@@ -31,6 +33,7 @@ export default function HomePage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [userProfile, setUserProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
 
   // فیلدهای فرم افزودن تسک
   const [title, setTitle] = useState('');
@@ -38,6 +41,7 @@ export default function HomePage() {
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [taskType, setTaskType] = useState<'personal' | 'work' | 'shared'>('personal');
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -66,6 +70,7 @@ export default function HomePage() {
         id: user.id,
         email: user.email,
         full_name: 'مدیر ارشد',
+        job_title: 'مدیر ارشد سیستم',
         role: 'super_admin',
         department_id: null,
         status: 'approved',
@@ -86,6 +91,61 @@ export default function HomePage() {
       setTasks(data as Task[]);
     }
   };
+
+  // ---------- آپلود آواتار ----------
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !userProfile) return;
+
+    // اعتبارسنجی: فقط عکس و حداکثر ۲ مگابایت
+    if (!file.type.startsWith('image/')) {
+      alert('فقط فایل تصویری مجاز است!');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      alert('حجم عکس حداکثر باید ۲ مگابایت باشد.');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const filePath = `${userProfile.id}/avatar.${fileExt}`;
+
+      // آپلود با upsert تا عکس قبلی جایگزین بشه
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      // گرفتن لینک عمومی (با کش‌باستر تا عکس جدید فوری لود بشه)
+      const { data: urlData } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+      const publicUrl = `${urlData.publicUrl}?t=${Date.now()}`;
+
+      // ذخیره لینک در پروفایل
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: publicUrl })
+        .eq('id', userProfile.id);
+
+      if (updateError) throw updateError;
+
+      setUserProfile({ ...userProfile, avatar_url: publicUrl });
+    } catch (err: any) {
+      alert('خطا در آپلود عکس: ' + (err.message || ''));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+  // ---------------------------------
 
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -158,28 +218,78 @@ export default function HomePage() {
       <div className="max-w-4xl mx-auto space-y-6">
 
         {/* هدر سایت */}
-        <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900/60 p-4 sm:p-6 rounded-2xl border border-slate-800 backdrop-blur-md">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl sm:text-2xl font-black bg-gradient-to-r from-indigo-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">
-                میز کار و برنامه‌ریزی
-              </h1>
-              <span className="text-xs px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">
-                {userProfile?.role === 'super_admin' || userProfile?.role === 'admin' ? '👑 سوپر ادمین' :
-                 userProfile?.role === 'ceo' ? '👔 مدیر عامل' :
-                 userProfile?.role === 'manager' ? '💼 سرتیم' : '👤 کارمند'}
-              </span>
+        <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900/70 p-4 sm:p-5 rounded-2xl border border-slate-800 backdrop-blur-md shadow-xl">
+          <div className="flex items-center gap-3.5">
+            {/* آواتار کاربر (قابلیت آپلود عکس) */}
+            <div className="relative group shrink-0">
+              <button
+                onClick={handleAvatarClick}
+                disabled={uploading}
+                className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-cyan-500 flex items-center justify-center font-black text-lg text-white shadow-lg shadow-purple-500/20 overflow-hidden transition hover:opacity-90 active:scale-95 disabled:opacity-50"
+              >
+                {uploading ? (
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                ) : userProfile?.avatar_url ? (
+                  <img
+                    src={userProfile.avatar_url}
+                    alt="آواتار کاربر"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  userProfile?.full_name?.trim().charAt(0) || '👤'
+                )}
+              </button>
+
+              {/* دکمه دوربین برای تغییر عکس */}
+              <button
+                onClick={handleAvatarClick}
+                disabled={uploading}
+                className="absolute -bottom-1 -left-1 w-6 h-6 rounded-full bg-slate-800 border border-slate-600 text-slate-300 flex items-center justify-center text-[10px] shadow-md hover:bg-indigo-600 hover:text-white hover:border-indigo-500 transition"
+                title="تغییر عکس پروفایل"
+              >
+                📷
+              </button>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarUpload}
+                className="hidden"
+              />
             </div>
-            <p className="text-slate-400 text-xs sm:text-sm mt-1">{userProfile?.email}</p>
+
+            {/* مشخصات کاربر: نام، سمت و نقش */}
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-base sm:text-lg font-black text-white">
+                  {userProfile?.full_name || 'کاربر گرامی'}
+                </h1>
+                <span className="text-[11px] px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">
+                  {userProfile?.role === 'super_admin' || userProfile?.role === 'admin' ? '👑 سوپر ادمین' :
+                   userProfile?.role === 'ceo' ? '👔 مدیر عامل' :
+                   userProfile?.role === 'manager' ? '💼 سرتیم' : '👤 کارشناس'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs font-semibold text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">
+                  {userProfile?.job_title || 'سمت سازمانی ثبت نشده'}
+                </span>
+                <span className="text-slate-500 text-xs">•</span>
+                <span className="text-slate-400 text-xs hidden sm:inline" dir="ltr">{userProfile?.email}</span>
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2.5 w-full sm:w-auto">
+          {/* کلیدهای عملیات هدر */}
+          <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
             {isSuperAdmin && (
               <Link
                 href="/admin"
                 className="flex-1 sm:flex-none text-center px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs sm:text-sm font-semibold shadow-lg shadow-indigo-600/20 transition"
               >
-                ⚙️ مدیریت سازمان
+                ⚙️ پنل مدیریت
               </Link>
             )}
             <button

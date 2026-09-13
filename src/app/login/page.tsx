@@ -1,168 +1,209 @@
 'use client';
 
 import { useState } from 'react';
-import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 
 export default function LoginPage() {
+  const router = useRouter();
+  const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
+  const [jobTitle, setJobTitle] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [infoMsg, setInfoMsg] = useState('');
-  const router = useRouter();
+  const [successMsg, setSuccessMsg] = useState('');
 
-  const handleAuth = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
-    setInfoMsg('');
+    setSuccessMsg('');
 
     try {
-      if (isSignUp) {
+      if (isLogin) {
+        // ورود کاربر
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
+        if (error) throw error;
+
+        // بررسی وضعیت حساب در profiles
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('status')
+          .eq('id', data.user.id)
+          .single();
+
+        if (profile?.status === 'blocked') {
+          await supabase.auth.signOut();
+          throw new Error('دسترسی حساب شما توسط مدیر مسدود شده است.');
+        }
+
+        if (profile?.status === 'pending') {
+          await supabase.auth.signOut();
+          throw new Error('حساب شما در انتظار تأیید مدیر سیستم است.');
+        }
+
+        router.push('/');
+        router.refresh();
+      } else {
         // ثبت‌نام کاربر جدید
+        if (!fullName.trim()) {
+          throw new Error('لطفاً نام و نام خانوادگی را وارد کنید.');
+        }
+        if (!jobTitle.trim()) {
+          throw new Error('لطفاً سمت شغلی را وارد کنید.');
+        }
+
         const { data, error } = await supabase.auth.signUp({
-          email,
+          email: email.trim(),
           password,
           options: {
             data: {
-              full_name: fullName,
+              full_name: fullName.trim(),
+              job_title: jobTitle.trim(),
             },
           },
         });
 
         if (error) throw error;
 
-        setInfoMsg('ثبت‌نام انجام شد! حساب شما پس از تأیید سوپر ادمین فعال می‌شود.');
-        setIsSignUp(false);
-      } else {
-        // ورود به حساب
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error) throw error;
-
-        // بررسی وضعیت دسترسی کاربر در جدول profiles
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('status, role')
-          .eq('id', data.user.id)
-          .single();
-
-        if (profile?.status === 'pending') {
-          await supabase.auth.signOut();
-          setErrorMsg('حساب شما هنوز توسط مدیر سیستم تأیید نشده است.');
-          setLoading(false);
-          return;
+        // به‌روزرسانی پروفایل در صورت وجود تریگر یا درج مستقیم
+        if (data.user) {
+          await supabase.from('profiles').upsert({
+            id: data.user.id,
+            email: email.trim(),
+            full_name: fullName.trim(),
+            job_title: jobTitle.trim(),
+            status: 'approved',
+          });
         }
 
-        if (profile?.status === 'blocked') {
-          await supabase.auth.signOut();
-          setErrorMsg('دسترسی این حساب مسدود شده است.');
-          setLoading(false);
-          return;
-        }
-
-        router.push('/');
-        router.refresh();
+        setSuccessMsg('ثبت‌نام با موفقیت انجام شد! در حال انتقال...');
+        setTimeout(() => {
+          router.push('/');
+          router.refresh();
+        }, 1500);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'خطایی رخ داد.');
+      setErrorMsg(err.message || 'خطایی در برقراری ارتباط رخ داد.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 font-sans" dir="rtl">
-      <div className="w-full max-w-md bg-slate-900/60 p-6 sm:p-8 rounded-2xl border border-slate-800 shadow-2xl backdrop-blur-md">
-        
-        <div className="text-center mb-6">
-          <h1 className="text-2xl font-black bg-gradient-to-r from-indigo-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">
-            سامانه مدیریت و پلنر
-          </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            {isSignUp ? 'ایجاد حساب کاربری سازمانی جدید' : 'ورود به میز کار'}
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden" dir="rtl">
+      {/* Background Glows */}
+      <div className="absolute top-1/4 -right-20 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-1/4 -left-20 w-96 h-96 bg-cyan-600/20 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="w-full max-w-md bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-8 rounded-3xl shadow-2xl relative z-10">
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 bg-gradient-to-tr from-purple-600 to-cyan-500 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg shadow-purple-500/25">
+            <span className="text-2xl">⚡</span>
+          </div>
+          <h1 className="text-2xl font-black text-white tracking-tight">سامانه مدیریت سازمانی</h1>
+          <p className="text-sm text-slate-400 mt-2">
+            {isLogin ? 'برای ورود اطلاعات حساب خود را وارد کنید' : 'فرم عضویت کارشناسان و مدیران'}
           </p>
         </div>
 
         {errorMsg && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
-            {errorMsg}
+          <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-sm flex items-center gap-2">
+            <span>⚠️</span>
+            <span>{errorMsg}</span>
           </div>
         )}
 
-        {infoMsg && (
-          <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs">
-            {infoMsg}
+        {successMsg && (
+          <div className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm flex items-center gap-2">
+            <span>✅</span>
+            <span>{successMsg}</span>
           </div>
         )}
 
-        <form onSubmit={handleAuth} className="space-y-4">
-          {isSignUp && (
-            <div>
-              <label className="block text-xs text-slate-300 mb-1.5 font-medium">نام و نام خانوادگی</label>
-              <input
-                type="text"
-                required
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="مثال: علی محمدی"
-                className="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition"
-              />
-            </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {!isLogin && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">نام و نام خانوادگی</label>
+                <input
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="مثال: علی احمدی"
+                  className="w-full px-4 py-3 bg-slate-800/60 border border-slate-700/80 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">سمت شغلی</label>
+                <input
+                  type="text"
+                  required
+                  value={jobTitle}
+                  onChange={(e) => setJobTitle(e.target.value)}
+                  placeholder="مثال: سرپرست کنترل کیفیت (QC)"
+                  className="w-full px-4 py-3 bg-slate-800/60 border border-slate-700/80 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all text-sm"
+                />
+              </div>
+            </>
           )}
 
           <div>
-            <label className="block text-xs text-slate-300 mb-1.5 font-medium">ایمیل کاری / شخصی</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">ایمیل سازمانی</label>
             <input
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@company.com"
-              className="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition"
+              placeholder="user@company.com"
+              className="w-full px-4 py-3 bg-slate-800/60 border border-slate-700/80 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all text-sm text-left"
+              dir="ltr"
             />
           </div>
 
           <div>
-            <label className="block text-xs text-slate-300 mb-1.5 font-medium">کلمه عبور</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">رمز عبور</label>
             <input
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              className="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500 transition"
+              className="w-full px-4 py-3 bg-slate-800/60 border border-slate-700/80 rounded-xl text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all text-sm text-left"
+              dir="ltr"
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 hover:opacity-90 disabled:opacity-50 text-white font-semibold rounded-xl text-sm shadow-md transition mt-2"
+            className="w-full mt-2 py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-medium rounded-xl shadow-lg shadow-purple-600/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm"
           >
-            {loading ? 'در حال پردازش...' : isSignUp ? 'ثبت درخواست عضویت' : 'ورود به حساب'}
+            {loading ? 'در حال پردازش...' : isLogin ? 'ورود به سامانه' : 'تکمیل ثبت‌نام'}
           </button>
         </form>
 
-        <div className="mt-6 text-center border-t border-slate-800 pt-4">
+        <div className="mt-6 pt-6 border-t border-slate-800/80 text-center">
           <button
+            type="button"
             onClick={() => {
-              setIsSignUp(!isSignUp);
+              setIsLogin(!isLogin);
               setErrorMsg('');
-              setInfoMsg('');
+              setSuccessMsg('');
             }}
-            className="text-xs text-indigo-400 hover:text-indigo-300 transition"
+            className="text-xs text-slate-400 hover:text-purple-400 transition-colors"
           >
-            {isSignUp ? 'قبلاً ثبت‌نام کرده‌اید؟ ورود به حساب' : 'حساب کاربری ندارید؟ درخواست عضویت'}
+            {isLogin ? 'حساب کاربری ندارید؟ ثبت‌نام کنید' : 'قبلاً حساب ساخته‌اید؟ ورود به سیستم'}
           </button>
         </div>
-
       </div>
     </div>
   );
