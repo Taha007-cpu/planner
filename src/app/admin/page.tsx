@@ -23,16 +23,74 @@ interface Profile {
   created_at: string;
 }
 
+const DEFAULT_JOB_TITLES = [
+  'مدیر عامل',
+  'مدیر ارشد اجرایی',
+  'مدیر بخش / سرتیم',
+  'سرپرست خط تولید',
+  'کارشناس تولید',
+  'کارشناس کنترل کیفیت (QC)',
+  'کارشناس تضمین کیفیت (QA)',
+  'مدیر انبار و لجستیک',
+  'کارشناس انبار',
+  'مدیر مالی و اداری',
+  'حسابدار ارشد',
+  'کارشناس حسابداری',
+  'مدیر منابع انسانی (HR)',
+  'کارشناس جذب و منابع انسانی',
+  'مدیر تحقیق و توسعه (R&D)',
+  'کارشناس فرمولاسیون و R&D',
+  'کارشناس فنی و نگهداری',
+  'کارشناس بازرگانی و خرید',
+  'کارمند اداری',
+];
+
+const FALLBACK_DEPARTMENTS: Department[] = [
+  { id: 'production', name: 'گروه تولید', icon: '⚙️' },
+  { id: 'qc', name: 'کنترل کیفیت (QC)', icon: '🔍' },
+  { id: 'qa', name: 'تضمین کیفیت (QA)', icon: '📋' },
+  { id: 'warehouse', name: 'انبار و لجستیک', icon: '📦' },
+  { id: 'finance', name: 'حسابداری و مالی', icon: '💰' },
+  { id: 'hr', name: 'امور اداری و منابع انسانی', icon: '👥' },
+  { id: 'rnd', name: 'تحقیق و توسعه (R&D)', icon: '🔬' },
+];
+
 export default function AdminPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [customJobInputId, setCustomJobInputId] = useState<string | null>(null);
+  const [customJobText, setCustomJobText] = useState('');
   const router = useRouter();
 
-  useEffect(() => {
-    checkAdminAndFetchData();
-  }, []);
+  const fetchDepartments = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('departments')
+        .select('id, name, icon')
+        .order('created_at', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        setDepartments(data as Department[]);
+      } else {
+        setDepartments(FALLBACK_DEPARTMENTS);
+      }
+    } catch {
+      setDepartments(FALLBACK_DEPARTMENTS);
+    }
+  };
+
+  const fetchProfiles = async () => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && data) {
+      setProfiles(data as Profile[]);
+    }
+  };
 
   const checkAdminAndFetchData = async () => {
     setLoading(true);
@@ -45,7 +103,6 @@ export default function AdminPage() {
 
     setCurrentUserId(user.id);
 
-    // بررسی دسترسی ادمین
     const { data: myProfile } = await supabase
       .from('profiles')
       .select('role')
@@ -63,30 +120,13 @@ export default function AdminPage() {
       return;
     }
 
-    // دریافت دپارتمان‌ها و تمام کاربران
     await Promise.all([fetchDepartments(), fetchProfiles()]);
     setLoading(false);
   };
 
-  const fetchDepartments = async () => {
-    const { data } = await supabase
-      .from('departments')
-      .select('id, name, icon')
-      .order('created_at', { ascending: true });
-
-    if (data) setDepartments(data as Department[]);
-  };
-
-  const fetchProfiles = async () => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (!error && data) {
-      setProfiles(data as Profile[]);
-    }
-  };
+  useEffect(() => {
+    checkAdminAndFetchData();
+  }, []);
 
   const updateUserRole = async (userId: string, newRole: Profile['role']) => {
     const { error } = await supabase
@@ -95,7 +135,9 @@ export default function AdminPage() {
       .eq('id', userId);
 
     if (!error) {
-      setProfiles(profiles.map(p => p.id === userId ? { ...p, role: newRole } : p));
+      setProfiles((prev) =>
+        prev.map((p) => (p.id === userId ? { ...p, role: newRole } : p))
+      );
     } else {
       alert('خطا در تغییر نقش: ' + error.message);
     }
@@ -108,7 +150,9 @@ export default function AdminPage() {
       .eq('id', userId);
 
     if (!error) {
-      setProfiles(profiles.map(p => p.id === userId ? { ...p, department_id: newDeptId || null } : p));
+      setProfiles((prev) =>
+        prev.map((p) => (p.id === userId ? { ...p, department_id: newDeptId || null } : p))
+      );
     } else {
       alert('خطا در تغییر دپارتمان: ' + error.message);
     }
@@ -121,9 +165,28 @@ export default function AdminPage() {
       .eq('id', userId);
 
     if (!error) {
-      setProfiles(profiles.map(p => p.id === userId ? { ...p, status: newStatus } : p));
+      setProfiles((prev) =>
+        prev.map((p) => (p.id === userId ? { ...p, status: newStatus } : p))
+      );
     } else {
       alert('خطا در تغییر وضعیت: ' + error.message);
+    }
+  };
+
+  const updateUserJobTitle = async (userId: string, newJobTitle: string | null) => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ job_title: newJobTitle })
+      .eq('id', userId);
+
+    if (!error) {
+      setProfiles((prev) =>
+        prev.map((p) => (p.id === userId ? { ...p, job_title: newJobTitle } : p))
+      );
+      setCustomJobInputId(null);
+      setCustomJobText('');
+    } else {
+      alert('خطا در تغییر سمت: ' + error.message);
     }
   };
 
@@ -146,7 +209,7 @@ export default function AdminPage() {
               <span>⚙️</span> پنل مدیریت سازمان و اعضا
             </h1>
             <p className="text-xs text-slate-400 mt-1">
-              تعیین نقش‌ها، دپارتمان سازمانی و وضعیت دسترسی کاربران
+              تعیین نقش‌ها، دپارتمان سازمانی، سمت شغلی و وضعیت دسترسی کاربران
             </p>
           </div>
 
@@ -171,15 +234,17 @@ export default function AdminPage() {
               <thead className="bg-slate-800/60 text-slate-400 border-b border-slate-800">
                 <tr>
                   <th className="p-3.5">کاربر</th>
-                  <th className="p-3.5">سمت سازمانی</th>
-                  <th className="p-3.5">دپارتمان</th>
+                  <th className="p-3.5">سمت سازمانی (کشویی)</th>
+                  <th className="p-3.5">دپارتمان (کشویی)</th>
                   <th className="p-3.5">نقش سیستمی</th>
-                  <th className="p-3.5">وضعیت</th>
+                  <th className="p-3.5">وضعیت (کشویی)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {profiles.map((p) => {
                   const isMe = p.id === currentUserId;
+                  const isSuperAdminUser = p.email === 'tahakheiri2007@gmail.com';
+                  const isCustomInputOpen = customJobInputId === p.id;
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-800/30 transition">
@@ -188,7 +253,7 @@ export default function AdminPage() {
                         <div className="w-9 h-9 rounded-xl bg-slate-800 overflow-hidden flex items-center justify-center font-bold text-white shrink-0 border border-slate-700">
                           {p.avatar_url ? (
                             /* eslint-disable-next-line @next/next/no-img-element */
-                            <img src={p.avatar_url} alt={p.full_name} className="w-full h-full object-cover" />
+                            <img src={p.avatar_url} alt={p.full_name || 'آواتار'} className="w-full h-full object-cover" />
                           ) : (
                             <span>{p.full_name?.charAt(0) || '👤'}</span>
                           )}
@@ -202,12 +267,68 @@ export default function AdminPage() {
                         </div>
                       </td>
 
-                      {/* سمت سازمانی */}
-                      <td className="p-3.5 text-slate-300">
-                        {p.job_title || <span className="text-slate-500">—</span>}
+                      {/* سمت سازمانی - کشویی با امکان وارد کردن دستی */}
+                      <td className="p-3.5">
+                        {isCustomInputOpen ? (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={customJobText}
+                              onChange={(e) => setCustomJobText(e.target.value)}
+                              placeholder="عنوان سمت جدید..."
+                              className="bg-slate-800 border border-indigo-500/50 rounded-lg px-2 py-1 text-xs text-white focus:outline-none w-32"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateUserJobTitle(p.id, customJobText.trim() || null)}
+                              className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-[11px] text-white font-bold"
+                            >
+                              ثبت
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCustomJobInputId(null)}
+                              className="px-1.5 py-1 bg-slate-800 hover:bg-slate-700 rounded text-[11px] text-slate-400"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <select
+                            value={
+                              DEFAULT_JOB_TITLES.includes(p.job_title || '')
+                                ? p.job_title || ''
+                                : p.job_title
+                                ? 'custom_existing'
+                                : ''
+                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '__custom__') {
+                                setCustomJobInputId(p.id);
+                                setCustomJobText(p.job_title || '');
+                              } else {
+                                updateUserJobTitle(p.id, val || null);
+                              }
+                            }}
+                            className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 max-w-[170px]"
+                          >
+                            <option value="">بدون سمت</option>
+                            {p.job_title && !DEFAULT_JOB_TITLES.includes(p.job_title) && (
+                              <option value="custom_existing">{p.job_title} (سفارشی)</option>
+                            )}
+                            {DEFAULT_JOB_TITLES.map((title) => (
+                              <option key={title} value={title}>
+                                {title}
+                              </option>
+                            ))}
+                            <option value="__custom__">✏️ ثبت سمت سفارشی...</option>
+                          </select>
+                        )}
                       </td>
 
-                      {/* تخصیص دپارتمان */}
+                      {/* تخصیص دپارتمان - کشویی */}
                       <td className="p-3.5">
                         <select
                           value={p.department_id || ''}
@@ -217,7 +338,7 @@ export default function AdminPage() {
                           <option value="">بدون دپارتمان</option>
                           {departments.map((dept) => (
                             <option key={dept.id} value={dept.id}>
-                              {dept.icon} {dept.name}
+                              {dept.icon ? `${dept.icon} ` : ''}{dept.name}
                             </option>
                           ))}
                         </select>
@@ -227,7 +348,7 @@ export default function AdminPage() {
                       <td className="p-3.5">
                         <select
                           value={p.role}
-                          disabled={p.email === 'tahakheiri2007@gmail.com'}
+                          disabled={isSuperAdminUser}
                           onChange={(e) => updateUserRole(p.id, e.target.value as Profile['role'])}
                           className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
                         >
@@ -239,11 +360,11 @@ export default function AdminPage() {
                         </select>
                       </td>
 
-                      {/* وضعیت دسترسی */}
+                      {/* وضعیت دسترسی - کشویی */}
                       <td className="p-3.5">
                         <select
                           value={p.status}
-                          disabled={p.email === 'tahakheiri2007@gmail.com'}
+                          disabled={isSuperAdminUser}
                           onChange={(e) => updateUserStatus(p.id, e.target.value as Profile['status'])}
                           className={`border rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none disabled:opacity-50 ${
                             p.status === 'approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :

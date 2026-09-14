@@ -1,604 +1,687 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Image from "next/image";
+import { useEffect, useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import {
+  LogOut,
+  Settings,
+  Edit2,
+  Globe,
+  Settings2,
+  CheckCircle2,
+  ShieldCheck,
+  Package,
+  DollarSign,
+  Users,
+  FlaskConical,
+  Trash2,
+  Calendar,
+  User as UserIcon,
+  Camera
+} from "lucide-react";
 
-interface Department {
+interface Task {
   id: string;
-  name: string;
-  icon?: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  priority: "low" | "medium" | "high";
+  status: "pending" | "in_progress" | "completed";
+  department: string;
+  assignee: string | null;
+  created_at: string;
 }
 
 interface Profile {
   id: string;
   full_name: string | null;
+  job_title: string | null;
   avatar_url: string | null;
-  email: string | null;
-  role: string | null;
-  job_title?: string | null;
-  department_id: string | null;
+  is_admin?: boolean;
 }
 
-interface TaskAssignee {
-  user_id: string;
-  profile: Profile | null;
-}
+const DEPARTMENTS = [
+  { id: "all", label: "همه دپارتمان‌ها", icon: Globe },
+  { id: "production", label: "گروه تولید", icon: Settings2 },
+  { id: "qc", label: "کنترل کیفیت (QC)", icon: CheckCircle2 },
+  { id: "qa", label: "تضمین کیفیت (QA)", icon: ShieldCheck },
+  { id: "warehouse", label: "انبار و لجستیک", icon: Package },
+  { id: "finance", label: "حسابداری و مالی", icon: DollarSign },
+  { id: "hr", label: "امور اداری و منابع انسانی", icon: Users },
+  { id: "rnd", label: "تحقیق و توسعه (R & D)", icon: FlaskConical },
+];
 
-interface Task {
-  id: string;
-  title: string;
-  description: string | null;
-  priority: "low" | "medium" | "high";
-  status: "todo" | "in_progress" | "done";
-  department_id: string | null;
-  created_at: string;
-  task_assignees?: TaskAssignee[];
-}
+// پالت رنگ‌های شیک و نئونی برای سمت شغلی
+const JOB_BADGE_COLORS = [
+  "bg-cyan-500/10 text-cyan-400 border-cyan-500/30",
+  "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+  "bg-purple-500/10 text-purple-400 border-purple-500/30",
+  "bg-pink-500/10 text-pink-400 border-pink-500/30",
+  "bg-sky-500/10 text-sky-400 border-sky-500/30",
+  "bg-teal-500/10 text-teal-400 border-teal-500/30",
+  "bg-indigo-500/10 text-indigo-400 border-indigo-500/30",
+  "bg-rose-500/10 text-rose-400 border-rose-500/30",
+];
 
-// تابع انتخاب پالت رنگ اختصاصی و رندوم بر اساس هویت کاربر
-function getUserBadgeStyle(seed?: string | null) {
-  const palettes = [
-    "bg-cyan-500/10 text-cyan-400 border-cyan-500/30 shadow-cyan-500/5",
-    "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 shadow-emerald-500/5",
-    "bg-purple-500/10 text-purple-400 border-purple-500/30 shadow-purple-500/5",
-    "bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/30 shadow-fuchsia-500/5",
-    "bg-sky-500/10 text-sky-400 border-sky-500/30 shadow-sky-500/5",
-    "bg-teal-500/10 text-teal-400 border-teal-500/30 shadow-teal-500/5",
-    "bg-rose-500/10 text-rose-400 border-rose-500/30 shadow-rose-500/5",
-    "bg-violet-500/10 text-violet-400 border-violet-500/30 shadow-violet-500/5",
-  ];
-
-  if (!seed) return palettes[0];
-
+function getJobColor(text: string | null | undefined): string {
+  if (!text) return JOB_BADGE_COLORS[0];
   let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = seed.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < text.length; i++) {
+    hash = text.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const index = Math.abs(hash) % palettes.length;
-  return palettes[index];
+  const index = Math.abs(hash) % JOB_BADGE_COLORS.length;
+  return JOB_BADGE_COLORS[index];
 }
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [members, setMembers] = useState<Profile[]>([]);
+  const [, startTransition] = useTransition();
+
+  const [loading, setLoading] = useState(true);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [selectedDept, setSelectedDept] = useState<string | "all">("all");
+  const [profile, setProfile] = useState<Profile | null>(null);
 
-  // Form State
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
-  const [deptId, setDeptId] = useState<string>("");
-  const [assigneeId, setAssigneeId] = useState<string>("");
-  const [loading, setLoading] = useState(false);
-  const [fetching, setFetching] = useState(true);
+  // فیلتر دپارتمان فعال
+  const [selectedDept, setSelectedDept] = useState("all");
 
-  // بررسی احراز هویت و لود دیتا
+  // فیلدهای فرم ثبت تسک
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskDept, setTaskDept] = useState("production");
+  const [taskAssignee, setTaskAssignee] = useState("");
+  const [taskPriority, setTaskPriority] = useState<"low" | "medium" | "high">("medium");
+  const [taskDesc, setTaskDesc] = useState("");
+  const [submittingTask, setSubmittingTask] = useState(false);
+
+  // مودال ویرایش پروفایل
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const [editFullName, setEditFullName] = useState("");
+  const [editJobTitle, setEditJobTitle] = useState("");
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
-    const checkUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    let isMounted = true;
 
-      if (!user) {
-        router.push("/login");
-        return;
+    async function loadData() {
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+        if (sessionError || !session) {
+          startTransition(() => {
+            router.push("/auth/login");
+          });
+          return;
+        }
+
+        if (isMounted) {
+          setUserEmail(session.user.email ?? null);
+        }
+
+        const userId = session.user.id;
+
+        // دریافت پروفایل
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", userId)
+          .maybeSingle();
+
+        if (isMounted && profileData) {
+          setProfile(profileData);
+          setEditFullName(profileData.full_name || "");
+          setEditJobTitle(profileData.job_title || "");
+          setAvatarPreview(profileData.avatar_url || null);
+        }
+
+        // دریافت تسک‌ها
+        const { data: tasksData } = await supabase
+          .from("tasks")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (isMounted && tasksData) {
+          setTasks(tasksData);
+        }
+      } catch (err) {
+        console.error("خطا در بارگذاری اطلاعات:", err);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
-      setUser(user);
+    }
 
-      // دریافت پروفایل کاربر جاری
-      const { data: profData } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .single();
-      if (profData) setProfile(profData);
+    loadData();
 
-      // دریافت دپارتمان‌ها
-      const { data: deptData } = await supabase
-        .from("departments")
-        .select("*")
-        .order("created_at", { ascending: true });
-      if (deptData) {
-        setDepartments(deptData);
-        if (deptData.length > 0) setDeptId(deptData[0].id);
-      }
-
-      // دریافت اعضا
-      const { data: membersData } = await supabase
-        .from("profiles")
-        .select("*")
-        .order("full_name", { ascending: true });
-      if (membersData) setMembers(membersData);
-
-      fetchTasks();
+    return () => {
+      isMounted = false;
     };
-
-    checkUser();
   }, [router]);
 
-  // واکشی تسک‌ها همراه با Assignee
-  const fetchTasks = async () => {
-    setFetching(true);
-    const { data, error } = await supabase
-      .from("tasks")
-      .select(
-        `
-        *,
-        task_assignees (
-          user_id,
-          profile:profiles (
-            id, full_name, avatar_url, email, role, department_id
-          )
-        )
-      `
-      )
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Error fetching tasks:", error.message);
-    } else if (data) {
-      setTasks(data as any);
-    }
-    setFetching(false);
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    startTransition(() => {
+      router.push("/auth/login");
+    });
   };
 
-  // ایجاد تسک جدید
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
-    setLoading(true);
+    if (!taskTitle.trim()) return;
 
+    setSubmittingTask(true);
     try {
-      const { data: newTask, error: taskError } = await supabase
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("کاربر لاگین نیست");
+
+      const newTask = {
+        user_id: user.id,
+        title: taskTitle.trim(),
+        department: taskDept,
+        assignee: taskAssignee.trim() || null,
+        priority: taskPriority,
+        description: taskDesc.trim() || null,
+        status: "pending" as const,
+      };
+
+      const { data, error } = await supabase
         .from("tasks")
-        .insert([
-          {
-            title,
-            description: description || null,
-            priority,
-            department_id: deptId || null,
-            status: "todo",
-            created_by: user.id,
-          },
-        ])
+        .insert([newTask])
         .select()
         .single();
 
-      if (taskError) throw taskError;
+      if (error) throw error;
 
-      if (newTask && assigneeId) {
-        const { error: assignError } = await supabase
-          .from("task_assignees")
-          .insert([
-            {
-              task_id: newTask.id,
-              user_id: assigneeId,
-              assigned_by: user.id,
-            },
-          ]);
-        if (assignError) throw assignError;
+      if (data) {
+        setTasks((prev) => [data, ...prev]);
+        setTaskTitle("");
+        setTaskDesc("");
+        setTaskAssignee("");
+        setTaskPriority("medium");
+      }
+    } catch (err: unknown) {
+      const error = err as Error;
+      alert(error.message || "خطا در ثبت تسک");
+    } finally {
+      setSubmittingTask(false);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      const { error } = await supabase.from("tasks").delete().eq("id", taskId);
+      if (error) throw error;
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    } catch (err) {
+      console.error("خطا در حذف:", err);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setAvatarFile(file);
+      setAvatarPreview(URL.createObjectURL(file));
+    }
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingProfile(true);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("کاربر یافت نشد");
+
+      let finalAvatarUrl = profile?.avatar_url || null;
+
+      if (avatarFile) {
+        const fileExt = avatarFile.name.split(".").pop();
+        const fileName = `${user.id}-${Date.now()}.${fileExt}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("avatars")
+          .upload(fileName, avatarFile, { upsert: true });
+
+        if (uploadError) throw uploadError;
+
+        const { data: publicUrlData } = supabase.storage
+          .from("avatars")
+          .getPublicUrl(fileName);
+
+        finalAvatarUrl = publicUrlData.publicUrl;
       }
 
-      setTitle("");
-      setDescription("");
-      setAssigneeId("");
-      fetchTasks();
-    } catch (err: any) {
-      alert("خطا در ایجاد تسک: " + err.message);
+      const updates = {
+        id: user.id,
+        full_name: editFullName.trim() || null,
+        job_title: editJobTitle.trim() || null,
+        avatar_url: finalAvatarUrl,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .upsert(updates);
+
+      if (profileError) throw profileError;
+
+      setProfile(updates);
+      setIsEditProfileOpen(false);
+      setAvatarFile(null);
+    } catch (err: unknown) {
+      const error = err as Error;
+      alert(error.message || "خطا در ذخیره پروفایل");
     } finally {
-      setLoading(false);
+      setSavingProfile(false);
     }
   };
 
-  // تغییر وضعیت تسک (تیک زدن)
-  const toggleTaskStatus = async (taskId: string, currentStatus: string) => {
-    const nextStatus = currentStatus === "done" ? "todo" : "done";
-    const { error } = await supabase
-      .from("tasks")
-      .update({ status: nextStatus })
-      .eq("id", taskId);
-
-    if (!error) {
-      setTasks(
-        tasks.map((t) => (t.id === taskId ? { ...t, status: nextStatus } : t))
-      );
-    }
-  };
-
-  // حذف تسک
-  const deleteTask = async (taskId: string) => {
-    const { error } = await supabase.from("tasks").delete().eq("id", taskId);
-    if (!error) {
-      setTasks(tasks.filter((t) => t.id !== taskId));
-    }
-  };
-
-  // خروج از حساب
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.push("/login");
-  };
-
-  const isAdmin =
-    profile?.role === "super_admin" ||
-    profile?.role === "admin" ||
-    user?.email?.toLowerCase().includes("admin");
-
-  const filteredTasks = tasks.filter((t) =>
-    selectedDept === "all" ? true : t.department_id === selectedDept
+  const filteredTasks = tasks.filter(
+    (t) => selectedDept === "all" || t.department === selectedDept
   );
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#060813] flex items-center justify-center text-slate-300">
+        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
-    <div
-      className="min-h-screen bg-[#070b14] text-slate-100 p-4 md:p-8 font-sans antialiased selection:bg-indigo-500/30"
-      dir="rtl"
-    >
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* ======================= نوار اطلاعات کاربر (HEADER) ======================= */}
-        <header className="flex flex-col md:flex-row items-center justify-between gap-4 p-5 rounded-2xl bg-[#0d1322]/80 border border-slate-800/80 backdrop-blur-xl shadow-2xl">
-          {/* سمت راست: آواتار بزرگ + نام و بج باکس شغلی + ایمیل */}
-          <div className="flex items-center gap-4 w-full md:w-auto">
-            <div className="relative w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 via-indigo-600 to-cyan-500 p-[2px] shadow-lg shadow-indigo-500/20 shrink-0">
-              <div className="w-full h-full bg-[#0a0f1c] rounded-[10px] overflow-hidden flex items-center justify-center">
+    <div className="min-h-screen bg-[#070a14] text-slate-100 p-4 md:p-8 font-sans" dir="rtl">
+      <div className="max-w-[1400px] mx-auto space-y-6">
+
+        {/* هدر بالایی با فریم مشخص */}
+        <header className="bg-[#0b101e]/90 border border-slate-800/80 rounded-2xl px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl backdrop-blur-md">
+          {/* سمت راست: مشخصات کاربر، نشان ادمین، کادر سمت شغلی و عکس */}
+          <div className="flex items-center gap-4 w-full md:w-auto justify-end md:justify-start">
+            <div className="relative">
+              <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-indigo-500/40 bg-slate-800 shadow-md">
                 {profile?.avatar_url ? (
-                  <Image
+                  <img
                     src={profile.avatar_url}
-                    alt={profile?.full_name || "User Avatar"}
-                    width={48}
-                    height={48}
+                    alt="User Avatar"
                     className="w-full h-full object-cover"
                   />
                 ) : (
-                  <span className="text-base font-bold text-indigo-300">
-                    {profile?.full_name ? profile.full_name.slice(0, 2) : "کاربر"}
-                  </span>
+                  <div className="w-full h-full flex items-center justify-center bg-indigo-600/30 text-indigo-300 font-bold">
+                    {profile?.full_name ? profile.full_name[0] : "U"}
+                  </div>
                 )}
               </div>
+              <button
+                onClick={() => setIsEditProfileOpen(true)}
+                className="absolute -bottom-1 -left-1 p-1 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white shadow-md transition-colors cursor-pointer"
+                title="ویرایش عکس و اطلاعات"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+              </button>
             </div>
 
-            <div className="flex flex-col text-right min-w-0">
-              <div className="flex items-center gap-2.5">
-                <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent truncate">
+            <div className="text-right space-y-1">
+              <div className="flex items-center gap-2">
+                <h1 className="text-base md:text-lg font-extrabold text-white tracking-tight">
                   {profile?.full_name || "کاربر سیستم"}
                 </h1>
-                {isAdmin && (
-                  <span className="inline-flex items-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[11px] px-2 py-0.5 rounded-md font-medium shrink-0">
-                    👑 سوپر ادمین
-                  </span>
-                )}
+                <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/30 font-bold flex items-center gap-1 shadow-sm">
+                  <span>👑</span>
+                  <span>سوپر ادمین</span>
+                </span>
               </div>
-
-              {/* ردیف باکس عنوان شغلی با رنگ رندوم + ایمیل */}
-              <div className="flex items-center gap-2.5 text-xs mt-1.5 flex-wrap">
-                <span
-                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg border text-[11px] font-medium backdrop-blur-md shadow-sm transition-all ${getUserBadgeStyle(
-                    user?.id || profile?.job_title || user?.email
-                  )}`}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70 animate-pulse" />
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                {/* کادر مدرن و رنگی سمت شغلی */}
+                <span className={`text-[11px] px-2 py-0.5 rounded-md border font-semibold shadow-sm ${getJobColor(profile?.job_title || profile?.full_name)}`}>
                   {profile?.job_title || "کارشناس"}
                 </span>
-
-                <span className="text-slate-700">•</span>
-
-                <span className="text-slate-500 font-mono text-[11px] truncate max-w-[200px] sm:max-w-none">
-                  {user?.email}
-                </span>
+                <span>•</span>
+                <span className="text-slate-400">{userEmail}</span>
               </div>
             </div>
           </div>
 
-          {/* سمت چپ: دکمه تنظیمات ادمین + دکمه خروج */}
-          <div className="flex items-center gap-2.5 w-full md:w-auto justify-end">
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => {
-                  router.push("/admin");
-                }}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/25 text-indigo-300 border border-indigo-500/30 text-xs font-medium transition-all cursor-pointer active:scale-95 shadow-sm"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="w-4 h-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-                <span>تنظیمات ادمین</span>
-              </button>
-            )}
-
+          {/* سمت چپ: تنظیمات ادمین و خروج */}
+          <div className="flex items-center gap-3 w-full md:w-auto justify-start md:justify-end">
             <button
-              onClick={handleLogout}
-              className="px-4 py-2 text-xs font-medium rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all duration-200 cursor-pointer active:scale-95"
+              onClick={() => router.push("/admin")}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 text-xs font-medium transition-colors cursor-pointer shadow-sm"
+            >
+              <Settings className="w-4 h-4" />
+              <span>تنظیمات ادمین</span>
+            </button>
+            <button
+              onClick={handleSignOut}
+              className="px-4 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 text-xs font-medium transition-colors cursor-pointer"
             >
               خروج
             </button>
           </div>
         </header>
 
-        {/* ======================= بدنه اصلی (SIDEBAR + MAIN) ======================= */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* ستون سمت راست: دپارتمان‌ها (Sidebar) */}
-          <aside className="lg:col-span-1 space-y-2 p-3 rounded-2xl bg-[#0d1322]/80 border border-slate-800/80 backdrop-blur-xl h-fit">
-            <div className="px-3 py-2 text-xs font-semibold text-slate-400 flex items-center justify-between border-b border-slate-800/60 mb-1">
-              <span>دپارتمان‌ها</span>
-              <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded-md text-slate-400">
-                {departments.length + 1}
-              </span>
-            </div>
+        {/* بدنه اصلی داشبورد */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-            <button
-              onClick={() => setSelectedDept("all")}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 cursor-pointer ${
-                selectedDept === "all"
-                  ? "bg-indigo-600 text-white font-semibold shadow-lg shadow-indigo-600/30"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span>🌐</span>
-                <span>همه دپارتمان‌ها</span>
+          {/* بخش اصلی (سمت چپ): فرم ثبت تسک جدید و لیست تسک‌ها */}
+          <div className="lg:col-span-9 space-y-6 order-2 lg:order-1">
+            
+            {/* کارت فرم ثبت تسک جدید */}
+            <div className="bg-[#0b101e]/90 border border-slate-800/80 rounded-2xl p-6 shadow-xl space-y-5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span className="text-indigo-400 text-base">+</span>
+                  <span>ثبت تسک جدید</span>
+                </h2>
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-md bg-black/20">
-                {tasks.length}
-              </span>
-            </button>
-
-            {departments.map((dept) => {
-              const count = tasks.filter((t) => t.department_id === dept.id).length;
-              return (
-                <button
-                  key={dept.id}
-                  onClick={() => setSelectedDept(dept.id)}
-                  className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 cursor-pointer ${
-                    selectedDept === dept.id
-                      ? "bg-indigo-600 text-white font-semibold shadow-lg shadow-indigo-600/30"
-                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <span>{dept.icon || "📁"}</span>
-                    <span className="truncate">{dept.name}</span>
-                  </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-black/20">
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </aside>
-
-          {/* ستون اصلی (فرم ساخت + لیست کارت‌ها) */}
-          <main className="lg:col-span-3 space-y-6">
-            {/* کارت ثبت تسک جدید */}
-            <div className="p-6 rounded-2xl bg-[#0d1322]/80 border border-slate-800/80 backdrop-blur-xl shadow-xl">
-              <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-4">
-                <span className="text-indigo-400 font-bold text-base">＋</span> ثبت تسک جدید
-              </h2>
 
               <form onSubmit={handleCreateTask} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* عنوان تسک */}
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">عنوان تسک</label>
+                    <label className="block text-[11px] text-slate-400 mb-1.5 font-medium">عنوان تسک</label>
                     <input
                       type="text"
                       required
-                      placeholder="مثال: تست کیفی بچ تولیدی ۱۴۰۳..."
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      className="w-full bg-[#12192c] border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                      value={taskTitle}
+                      onChange={(e) => setTaskTitle(e.target.value)}
+                      placeholder="مثال: تست کیفی بچ تولیدی ۱۴۰۳ ..."
+                      className="w-full bg-[#111728] border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                     />
                   </div>
 
+                  {/* دپارتمان مربوطه */}
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">دپارتمان مربوطه</label>
+                    <label className="block text-[11px] text-slate-400 mb-1.5 font-medium">دپارتمان مربوطه</label>
                     <select
-                      value={deptId}
-                      onChange={(e) => setDeptId(e.target.value)}
-                      className="w-full bg-[#12192c] border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
+                      value={taskDept}
+                      onChange={(e) => setTaskDept(e.target.value)}
+                      className="w-full bg-[#111728] border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
                     >
-                      {departments.map((d) => (
-                        <option key={d.id} value={d.id} className="bg-slate-900">
-                          {d.icon || "📁"} {d.name}
-                        </option>
-                      ))}
+                      <option value="production">⚙️ گروه تولید</option>
+                      <option value="qc">🔍 کنترل کیفیت (QC)</option>
+                      <option value="qa">📋 تضمین کیفیت (QA)</option>
+                      <option value="warehouse">📦 انبار و لجستیک</option>
+                      <option value="finance">💰 حسابداری و مالی</option>
+                      <option value="hr">👥 امور اداری و منابع انسانی</option>
+                      <option value="rnd">🔬 تحقیق و توسعه (R & D)</option>
                     </select>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                  {/* ارجاع به مسئول */}
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">ارجاع به مسئول (Assignee)</label>
-                    <select
-                      value={assigneeId}
-                      onChange={(e) => setAssigneeId(e.target.value)}
-                      className="w-full bg-[#12192c] border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
-                    >
-                      <option value="" className="bg-slate-900">تعیین نشده (بدون مسئول)</option>
-                      {members.map((m) => (
-                        <option key={m.id} value={m.id} className="bg-slate-900">
-                          👤 {m.full_name || m.email} ({m.role || "عضو"})
-                        </option>
-                      ))}
-                    </select>
+                    <label className="block text-[11px] text-slate-400 mb-1.5 font-medium">ارجاع به مسئول (Assignee)</label>
+                    <input
+                      type="text"
+                      value={taskAssignee}
+                      onChange={(e) => setTaskAssignee(e.target.value)}
+                      placeholder="تعیین نشده (بدون مسئول)"
+                      className="w-full bg-[#111728] border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    />
                   </div>
 
+                  {/* دکمه‌های انتخاب اولویت */}
                   <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">اولویت</label>
+                    <label className="block text-[11px] text-slate-400 mb-1.5 font-medium">اولویت</label>
                     <div className="grid grid-cols-3 gap-2">
-                      {(["low", "medium", "high"] as const).map((p) => {
-                        const labels = { low: "عادی", medium: "متوسط 🟡", high: "فوری 🔴" };
-                        const isSelected = priority === p;
-                        return (
-                          <button
-                            type="button"
-                            key={p}
-                            onClick={() => setPriority(p)}
-                            className={`py-2 text-[11px] font-medium rounded-xl border transition-all cursor-pointer ${
-                              isSelected
-                                ? "bg-indigo-600/20 border-indigo-500 text-indigo-300 font-bold"
-                                : "bg-[#12192c] border-slate-800 text-slate-400 hover:border-slate-700"
-                            }`}
-                          >
-                            {labels[p]}
-                          </button>
-                        );
-                      })}
+                      <button
+                        type="button"
+                        onClick={() => setTaskPriority("low")}
+                        className={`py-2 text-xs rounded-xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          taskPriority === "low"
+                            ? "bg-blue-600/30 border-blue-500 text-blue-300 font-bold"
+                            : "bg-[#111728] border-slate-800 text-slate-400 hover:border-slate-700"
+                        }`}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                        عادی
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setTaskPriority("medium")}
+                        className={`py-2 text-xs rounded-xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          taskPriority === "medium"
+                            ? "bg-amber-600/30 border-amber-500 text-amber-300 font-bold"
+                            : "bg-[#111728] border-slate-800 text-slate-400 hover:border-slate-700"
+                        }`}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                        متوسط
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setTaskPriority("high")}
+                        className={`py-2 text-xs rounded-xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          taskPriority === "high"
+                            ? "bg-rose-600/30 border-rose-500 text-rose-300 font-bold"
+                            : "bg-[#111728] border-slate-800 text-slate-400 hover:border-slate-700"
+                        }`}
+                      >
+                        <span className="w-2 h-2 rounded-full bg-rose-400"></span>
+                        فوری
+                      </button>
                     </div>
                   </div>
                 </div>
 
+                {/* توضیحات تکمیلی */}
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">توضیحات تکمیلی (اختیاری)</label>
+                  <label className="block text-[11px] text-slate-400 mb-1.5 font-medium">توضیحات تکمیلی (اختیاری)</label>
                   <textarea
                     rows={2}
+                    value={taskDesc}
+                    onChange={(e) => setTaskDesc(e.target.value)}
                     placeholder="جزییات، استانداردها یا اقدامات لازم..."
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    className="w-full bg-[#12192c] border border-slate-800 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors resize-none"
+                    className="w-full bg-[#111728] border border-slate-800 rounded-xl px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none"
                   />
                 </div>
 
+                {/* دکمه افزودن */}
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/25 transition-all duration-200 cursor-pointer disabled:opacity-50"
+                  disabled={submittingTask}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/20 hover:opacity-90 transition-all cursor-pointer disabled:opacity-50"
                 >
-                  {loading ? "در حال ثبت..." : "افزودن به لیست کارها"}
+                  {submittingTask ? "در حال افزودن..." : "افزودن به لیست کارها"}
                 </button>
               </form>
             </div>
 
-            {/* لیست تسک‌ها */}
+            {/* لیست تسک‌های جاری */}
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-                <span>📋 لیست تسک‌های جاری</span>
+                <span className="font-medium">📋 لیست تسک‌های جاری</span>
                 <span>مجموع: {filteredTasks.length}</span>
               </div>
 
-              {fetching ? (
-                <div className="text-center py-12 text-xs text-slate-500 animate-pulse">
-                  در حال دریافت تسک‌ها...
-                </div>
-              ) : filteredTasks.length === 0 ? (
-                <div className="p-12 text-center rounded-2xl bg-[#0d1322]/40 border border-dashed border-slate-800 text-slate-500 text-xs">
+              {filteredTasks.length === 0 ? (
+                <div className="bg-[#0b101e]/60 border border-slate-800/60 rounded-2xl py-16 text-center text-xs text-slate-500">
                   هیچ فعالیتی در این دپارتمان ثبت نشده است.
                 </div>
               ) : (
-                filteredTasks.map((task) => {
-                  const assignee = task.task_assignees?.[0]?.profile;
-                  const isDone = task.status === "done";
-
-                  return (
+                <div className="space-y-2">
+                  {filteredTasks.map((t) => (
                     <div
-                      key={task.id}
-                      className={`group flex items-center justify-between p-4 rounded-xl border transition-all duration-200 ${
-                        isDone
-                          ? "bg-[#0a0f1c]/40 border-slate-900 opacity-60"
-                          : "bg-[#0d1322]/80 border-slate-800/80 hover:border-slate-700 shadow-md"
-                      }`}
+                      key={t.id}
+                      className="bg-[#0b101e] border border-slate-800/80 rounded-xl p-4 flex items-center justify-between gap-4"
                     >
-                      <div className="flex items-center gap-3.5 flex-1 min-w-0">
-                        {/* دکمه وضعیت چک‌باکس */}
-                        <button
-                          onClick={() => toggleTaskStatus(task.id, task.status)}
-                          className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all cursor-pointer ${
-                            isDone
-                              ? "bg-emerald-500 border-emerald-500 text-white"
-                              : "border-slate-700 hover:border-indigo-500 bg-slate-900/50"
-                          }`}
-                        >
-                          {isDone && <span className="text-xs">✓</span>}
-                        </button>
-
-                        {/* عنوان و توضیحات */}
-                        <div className="min-w-0 flex-1">
-                          <h3
-                            className={`text-xs font-medium truncate ${
-                              isDone ? "line-through text-slate-500" : "text-slate-200"
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-white">{t.title}</h4>
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+                              t.priority === "high"
+                                ? "bg-rose-500/20 text-rose-400"
+                                : t.priority === "medium"
+                                ? "bg-amber-500/20 text-amber-400"
+                                : "bg-blue-500/20 text-blue-400"
                             }`}
                           >
-                            {task.title}
-                          </h3>
-                          {task.description && (
-                            <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
-                              {task.description}
-                            </p>
-                          )}
+                            {t.priority === "high" ? "فوری" : t.priority === "medium" ? "متوسط" : "عادی"}
+                          </span>
                         </div>
-                      </div>
-
-                      {/* برچسب‌ها و آواتار سمت چپ کارت */}
-                      <div className="flex items-center gap-2.5 mr-3 shrink-0">
-                        {/* آواتار مسئول */}
-                        {assignee && (
-                          <div
-                            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-900/80 border border-slate-800"
-                            title={`مسئول: ${assignee.full_name || assignee.email}`}
-                          >
-                            {assignee.avatar_url ? (
-                              <Image
-                                src={assignee.avatar_url}
-                                alt="Assignee"
-                                width={18}
-                                height={18}
-                                className="rounded-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-4 h-4 rounded-full bg-indigo-500/30 text-[9px] flex items-center justify-center text-indigo-300 font-bold">
-                                {assignee.full_name?.[0] || "U"}
-                              </div>
-                            )}
-                            <span className="text-[10px] text-slate-300 max-w-[80px] truncate">
-                              {assignee.full_name || assignee.email?.split("@")[0]}
-                            </span>
-                          </div>
+                        {t.description && <p className="text-[11px] text-slate-400">{t.description}</p>}
+                        {t.assignee && (
+                          <span className="text-[10px] text-slate-500">مسئول: {t.assignee}</span>
                         )}
-
-                        {/* برچسب اولویت */}
-                        <span
-                          className={`text-[10px] px-2 py-0.5 rounded-md border font-medium ${
-                            task.priority === "high"
-                              ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                              : task.priority === "medium"
-                              ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                              : "bg-slate-800/60 text-slate-400 border-slate-700/60"
-                          }`}
-                        >
-                          {task.priority === "high" ? "فوری" : task.priority === "medium" ? "متوسط" : "عادی"}
-                        </span>
-
-                        {/* دکمه حذف */}
-                        <button
-                          onClick={() => deleteTask(task.id)}
-                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 p-1 text-xs transition-opacity cursor-pointer"
-                          title="حذف تسک"
-                        >
-                          ✕
-                        </button>
                       </div>
+
+                      <button
+                        onClick={() => handleDeleteTask(t.id)}
+                        className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors"
+                        title="حذف"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
-                  );
-                })
+                  ))}
+                </div>
               )}
             </div>
-          </main>
+
+          </div>
+
+          {/* سایدبار سمت راست (دپارتمان‌ها) */}
+          <div className="lg:col-span-3 space-y-4 order-1 lg:order-2">
+            <div className="bg-[#0b101e]/90 border border-slate-800/80 rounded-2xl p-4 shadow-xl space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-400 px-2 py-1">
+                <span>دپارتمان‌ها</span>
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                  {tasks.length}
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                {DEPARTMENTS.map((dept) => {
+                  const Icon = dept.icon;
+                  const isSelected = selectedDept === dept.id;
+                  const count =
+                    dept.id === "all"
+                      ? tasks.length
+                      : tasks.filter((t) => t.department === dept.id).length;
+
+                  return (
+                    <button
+                      key={dept.id}
+                      onClick={() => setSelectedDept(dept.id)}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+                        isSelected
+                          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
+                          : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Icon className="w-4 h-4" />
+                        <span>{dept.label}</span>
+                      </div>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded-md ${
+                          isSelected ? "bg-indigo-700 text-white" : "text-slate-500"
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
+
+      {/* مودال ویرایش پروفایل کاربر */}
+      {isEditProfileOpen && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#0e1526] border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <UserIcon className="w-4 h-4 text-indigo-400" />
+              <span>ویرایش مشخصات کاربر</span>
+            </h3>
+
+            <form onSubmit={handleSaveProfile} className="space-y-4">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-20 h-20 rounded-2xl border-2 border-indigo-500/40 bg-[#141b2d] overflow-hidden flex items-center justify-center relative shadow-inner">
+                  {avatarPreview ? (
+                    <img
+                      src={avatarPreview}
+                      alt="Avatar Preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <UserIcon className="w-8 h-8 text-slate-500" />
+                  )}
+                </div>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-medium cursor-pointer transition-all"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>آپلود تصویر جدید</span>
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1 font-medium">نام و نام خانوادگی</label>
+                <input
+                  type="text"
+                  value={editFullName}
+                  onChange={(e) => setEditFullName(e.target.value)}
+                  placeholder="مثال: کاربر سیستم"
+                  className="w-full bg-[#141b2d] border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1 font-medium">سمت شغلی</label>
+                <input
+                  type="text"
+                  value={editJobTitle}
+                  onChange={(e) => setEditJobTitle(e.target.value)}
+                  placeholder="مثال: کارشناس"
+                  className="w-full bg-[#141b2d] border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsEditProfileOpen(false)}
+                  className="px-4 py-2 text-xs font-medium rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingProfile}
+                  className="px-5 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {savingProfile ? "در حال ذخیره..." : "ذخیره تغییرات"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
