@@ -38,7 +38,37 @@ interface Profile {
   full_name: string | null;
   job_title: string | null;
   avatar_url: string | null;
+  role: string | null;
   is_admin?: boolean;
+}
+
+// تنظیمات نقش‌های کاربر (پویا و رنگ‌بندی ویژه هر نقش - فقط ۳ نقش اصلی)
+const ROLE_BADGES: Record<string, { label: string; color: string; icon: string }> = {
+  superadmin: { label: "سوپر ادمین", color: "bg-amber-500/10 text-amber-400 border-amber-500/30", icon: "👑" },
+  ceo: { label: "مدیر عامل", color: "bg-rose-500/10 text-rose-400 border-rose-500/30", icon: "🏢" },
+  manager: { label: "مدیر بخش", color: "bg-purple-500/10 text-purple-400 border-purple-500/30", icon: "👔" },
+};
+
+function getRoleBadge(profile: Profile | null) {
+  const raw = (profile?.role || "").trim().toLowerCase();
+  const original = (profile?.role || "").trim();
+
+  const map: Record<string, keyof typeof ROLE_BADGES> = {
+    superadmin: "superadmin",
+    super_admin: "superadmin",
+    "super-admin": "superadmin",
+    admin: "superadmin",
+    ceo: "ceo",
+    manager: "manager",
+    "سوپر ادمین": "superadmin",
+    "مدیر عامل": "ceo",
+    "مدیر بخش": "manager",
+  };
+
+  const key = map[raw] || map[original];
+  if (key) return ROLE_BADGES[key];
+  if (profile?.is_admin) return ROLE_BADGES.superadmin;
+  return null;
 }
 
 const DEPARTMENTS = [
@@ -270,7 +300,7 @@ export default function DashboardPage() {
 
       if (profileError) throw profileError;
 
-      setProfile(updates);
+      setProfile((prev) => (prev ? { ...prev, ...updates } : null));
       setIsEditProfileOpen(false);
       setAvatarFile(null);
     } catch (err: unknown) {
@@ -293,13 +323,16 @@ export default function DashboardPage() {
     );
   }
 
+  // محاسبه استایل تگ نقش بر اساس فیلد role با استفاده از تابع کمکی getRoleBadge
+  const activeRoleBadge = getRoleBadge(profile);
+
   return (
     <div className="min-h-screen bg-[#070a14] text-slate-100 p-4 md:p-8 font-sans" dir="rtl">
       <div className="max-w-[1400px] mx-auto space-y-6">
 
         {/* هدر بالایی با فریم مشخص */}
         <header className="bg-[#0b101e]/90 border border-slate-800/80 rounded-2xl px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl backdrop-blur-md">
-          {/* سمت راست: مشخصات کاربر، نشان ادمین، کادر سمت شغلی و عکس */}
+          {/* سمت راست: مشخصات کاربر، نشان نقش، کادر سمت شغلی و عکس */}
           <div className="flex items-center gap-4 w-full md:w-auto justify-end md:justify-start">
             <div className="relative">
               <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-indigo-500/40 bg-slate-800 shadow-md">
@@ -329,10 +362,13 @@ export default function DashboardPage() {
                 <h1 className="text-base md:text-lg font-extrabold text-white tracking-tight">
                   {profile?.full_name || "کاربر سیستم"}
                 </h1>
-                <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/30 font-bold flex items-center gap-1 shadow-sm">
-                  <span>👑</span>
-                  <span>سوپر ادمین</span>
-                </span>
+                {/* نشان پویا و داینامیک نقش کاربر - تنها در صورت وجود نقش جزو ۳ گروه اصلی */}
+                {activeRoleBadge && (
+                  <span className={`text-[11px] px-2.5 py-0.5 rounded-md border font-bold flex items-center gap-1 shadow-sm ${activeRoleBadge.color}`}>
+                    <span>{activeRoleBadge.icon}</span>
+                    <span>{activeRoleBadge.label}</span>
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 {/* کادر مدرن و رنگی سمت شغلی */}
@@ -460,7 +496,7 @@ export default function DashboardPage() {
                         onClick={() => setTaskPriority("high")}
                         className={`py-2 text-xs rounded-xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                           taskPriority === "high"
-                            ? "bg-rose-600/30 border-rose-500 text-rose-300 font-bold"
+                            ? "bg-rose-600/30 border-rose-500 text-rose-400 font-bold"
                             : "bg-[#111728] border-slate-800 text-slate-400 hover:border-slate-700"
                         }`}
                       >
