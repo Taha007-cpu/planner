@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import PacManGame from "@/components/PacManGame";
 import {
   LogOut,
   Edit2,
@@ -17,7 +18,9 @@ import {
   Trash2,
   User as UserIcon,
   Camera,
-  PlusCircle
+  PlusCircle,
+  X,
+  Crown
 } from "lucide-react";
 
 interface Task {
@@ -39,6 +42,7 @@ interface Profile {
   avatar_url: string | null;
   role: string | null;
   is_admin?: boolean;
+  email?: string;
 }
 
 const ROLE_BADGES: Record<string, { label: string; color: string; icon: string }> = {
@@ -75,6 +79,13 @@ function getRoleBadge(profile: Profile | null) {
   if (key) return ROLE_BADGES[key];
   if (profile?.is_admin) return ROLE_BADGES.superadmin;
   return null;
+}
+
+function isSuperAdminUser(profile: Profile | null): boolean {
+  if (!profile) return false;
+  if (profile.is_admin) return true;
+  const raw = (profile.role || "").trim().toLowerCase();
+  return ["superadmin", "super_admin", "admin", "سوپر ادمین", "ceo", "مدیر عامل"].includes(raw);
 }
 
 const DEPARTMENTS = [
@@ -145,6 +156,7 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [selectedDept, setSelectedDept] = useState("all");
+  const [isGameOpen, setIsGameOpen] = useState(false);
 
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDept, setTaskDept] = useState("production");
@@ -160,6 +172,11 @@ export default function DashboardPage() {
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
+  const [loadingProfiles, setLoadingProfiles] = useState(false);
+  const [updatingUserRole, setUpdatingUserRole] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -189,6 +206,49 @@ export default function DashboardPage() {
     loadData();
     return () => { isMounted = false; };
   }, [router]);
+
+  const handleFetchAllProfiles = async () => {
+    setLoadingProfiles(true);
+    try {
+      const { data, error } = await supabase.from("profiles").select("*").order("full_name", { ascending: true });
+      if (error) throw error;
+      if (data) setAllProfiles(data);
+    } catch (err) {
+      console.error("خطا در دریافت لیست کاربران:", err);
+    } finally {
+      setLoadingProfiles(false);
+    }
+  };
+
+  const handleOpenAdminModal = () => {
+    setIsAdminModalOpen(true);
+    handleFetchAllProfiles();
+  };
+
+  const handleRoleChange = async (userId: string, newRole: string) => {
+    setUpdatingUserRole(userId);
+    try {
+      const isSuper = ["superadmin", "super_admin", "admin", "سوپر ادمین"].includes(newRole);
+      const { error } = await supabase
+        .from("profiles")
+        .update({ role: newRole, is_admin: isSuper })
+        .eq("id", userId);
+
+      if (error) throw error;
+
+      setAllProfiles((prev) =>
+        prev.map((p) => (p.id === userId ? { ...p, role: newRole, is_admin: isSuper } : p))
+      );
+
+      if (profile && profile.id === userId) {
+        setProfile((prev) => (prev ? { ...prev, role: newRole, is_admin: isSuper } : null));
+      }
+    } catch (err: any) {
+      alert(err.message || "خطا در ویرایش نقش کاربر");
+    } finally {
+      setUpdatingUserRole(null);
+    }
+  };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -280,6 +340,7 @@ export default function DashboardPage() {
 
   const filteredTasks = tasks.filter((t) => selectedDept === "all" || t.department === selectedDept);
   const activeRoleBadge = getRoleBadge(profile);
+  const canAccessAdmin = isSuperAdminUser(profile);
 
   if (loading) {
     return (
@@ -292,7 +353,6 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-950 p-4 md:p-8 font-sans" dir="rtl">
       <div className="max-w-[1400px] mx-auto space-y-6">
-        
         <header className="bg-white border-2 border-slate-200/80 rounded-2xl px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm">
           <div className="flex items-center gap-4 w-full md:w-auto">
             <div className="relative group">
@@ -306,6 +366,7 @@ export default function DashboardPage() {
                 )}
               </div>
               <button
+                type="button"
                 onClick={() => setIsEditProfileOpen(true)}
                 className="absolute -bottom-1 -left-1 p-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg shadow cursor-pointer transition-all"
               >
@@ -336,7 +397,19 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+            {canAccessAdmin && (
+              <button
+                type="button"
+                onClick={handleOpenAdminModal}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border-2 border-amber-400/60 text-xs font-black shadow-[0_2px_0_0_#f59e0b] hover:shadow-[0_0_18px_rgba(245,158,11,0.4)] hover:-translate-y-0.5 transition-all duration-300 cursor-pointer"
+              >
+                <Crown className="w-4 h-4 text-amber-600" />
+                <span>مدیریت دسترسی‌ها</span>
+              </button>
+            )}
+
             <button
+              type="button"
               onClick={handleSignOut}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-50/80 hover:bg-rose-500 text-rose-800 hover:text-white border border-rose-200 text-xs font-black shadow-[0_2px_0_0_#fecdd3] hover:shadow-[0_0_16px_rgba(244,63,94,0.4)] hover:-translate-y-0.5 transition-all duration-300 cursor-pointer"
             >
@@ -484,7 +557,11 @@ export default function DashboardPage() {
                         </div>
                         {t.description && <p className="text-xs font-semibold text-slate-700">{t.description}</p>}
                       </div>
-                      <button onClick={() => handleDeleteTask(t.id)} className="p-2 text-slate-400 hover:text-rose-600 cursor-pointer transition-colors">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteTask(t.id)}
+                        className="p-2 text-slate-400 hover:text-rose-600 cursor-pointer transition-colors"
+                      >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
@@ -508,18 +585,19 @@ export default function DashboardPage() {
                   return (
                     <button
                       key={dept.id}
+                      type="button"
                       onClick={() => setSelectedDept(dept.id)}
-                      className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-black transition-all duration-300 border cursor-pointer ${
-                        isSelected
-                          ? `${dept.active} -translate-y-0.5`
-                          : `${dept.idle} hover:-translate-y-0.5`
+                      className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border text-xs font-black cursor-pointer transition-all duration-300 ${
+                        isSelected ? dept.active : dept.idle
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
                         <Icon className="w-4 h-4" />
                         <span>{dept.label}</span>
                       </div>
-                      <span className={`text-[11px] px-2 py-0.5 rounded-md font-black transition-all ${isSelected ? "bg-white/25 text-white" : "bg-slate-200/80 text-slate-700"}`}>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-md font-black ${
+                        isSelected ? "bg-white/20 text-white" : "bg-slate-200/70 text-slate-700"
+                      }`}>
                         {count}
                       </span>
                     </button>
@@ -528,7 +606,10 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="group relative bg-gradient-to-b from-white to-slate-50 border-2 border-slate-200/90 rounded-2xl p-6 text-center shadow-[0_4px_0_0_#cbd5e1] hover:shadow-[0_2px_0_0_#cbd5e1] hover:border-emerald-400 transition-all duration-300 hover:-translate-y-1 flex items-center justify-center overflow-hidden cursor-pointer">
+            <div
+              onClick={() => setIsGameOpen(true)}
+              className="group relative bg-white border-2 border-slate-200/80 rounded-2xl p-4 shadow-sm flex items-center justify-center overflow-hidden cursor-pointer select-none"
+            >
               <div className="absolute -inset-1 bg-gradient-to-r from-emerald-500/0 via-emerald-400/20 to-teal-500/0 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-all duration-500" />
               <div className="relative w-full flex items-center justify-center py-2">
                 <img
@@ -542,23 +623,47 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {isEditProfileOpen && (
+          {isEditProfileOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white border-2 border-slate-200 rounded-2xl p-6 shadow-2xl space-y-5">
-            <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-              <UserIcon className="w-5 h-5 text-[#00875A]" />
-              <span>ویرایش پروفایل</span>
-            </h3>
+            <div className="flex items-center justify-between border-b-2 border-slate-100 pb-3">
+              <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                <UserIcon className="w-5 h-5 text-[#00875A]" />
+                <span>ویرایش پروفایل</span>
+              </h3>
+
+              <button
+                type="button"
+                onClick={() => setIsEditProfileOpen(false)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 cursor-pointer transition-colors"
+                aria-label="بستن"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
             <form onSubmit={handleSaveProfile} className="space-y-4">
               <div className="flex flex-col items-center gap-3">
                 <div className="w-20 h-20 rounded-2xl border-2 border-emerald-300 bg-emerald-50 overflow-hidden flex items-center justify-center relative shadow-sm">
                   {avatarPreview ? (
-                    <img src={avatarPreview} alt="Preview" className="w-full h-full object-cover" />
+                    <img
+                      src={avatarPreview}
+                      alt="پیش‌نمایش تصویر پروفایل"
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
                     <UserIcon className="w-8 h-8 text-slate-500" />
                   )}
                 </div>
-                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -568,8 +673,11 @@ export default function DashboardPage() {
                   <span>انتخاب تصویر</span>
                 </button>
               </div>
+
               <div>
-                <label className="block text-xs text-slate-900 mb-1 font-black">نام کامل</label>
+                <label className="block text-xs text-slate-900 mb-1 font-black">
+                  نام کامل
+                </label>
                 <input
                   type="text"
                   value={editFullName}
@@ -577,8 +685,11 @@ export default function DashboardPage() {
                   className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-950 focus:border-[#00875A] focus:outline-none"
                 />
               </div>
+
               <div>
-                <label className="block text-xs text-slate-900 mb-1 font-black">سمت شغلی</label>
+                <label className="block text-xs text-slate-900 mb-1 font-black">
+                  سمت شغلی
+                </label>
                 <input
                   type="text"
                   value={editJobTitle}
@@ -586,6 +697,7 @@ export default function DashboardPage() {
                   className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-950 focus:border-[#00875A] focus:outline-none"
                 />
               </div>
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t-2 border-slate-100">
                 <button
                   type="button"
@@ -594,6 +706,7 @@ export default function DashboardPage() {
                 >
                   انصراف
                 </button>
+
                 <button
                   type="submit"
                   disabled={savingProfile}
@@ -605,6 +718,107 @@ export default function DashboardPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {isAdminModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl max-h-[85vh] overflow-hidden bg-white border-2 border-amber-200 rounded-2xl shadow-2xl">
+            <div className="flex items-center justify-between p-5 border-b border-slate-200">
+              <div className="flex items-center gap-2">
+                <Crown className="w-5 h-5 text-amber-600" />
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">
+                    مدیریت دسترسی‌ها
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    نقش کاربران را تغییر دهید.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAdminModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                aria-label="بستن"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="max-h-[65vh] overflow-y-auto p-5">
+              {loadingProfiles ? (
+                <div className="py-12 flex justify-center">
+                  <div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : allProfiles.length === 0 ? (
+                <p className="py-10 text-center text-sm font-bold text-slate-400">
+                  کاربری یافت نشد.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {allProfiles.map((member) => {
+                    const isUpdating = updatingUserRole === member.id;
+
+                    return (
+                      <div
+                        key={member.id}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 shrink-0 rounded-xl overflow-hidden bg-emerald-100 flex items-center justify-center">
+                            {member.avatar_url ? (
+                              <img
+                                src={member.avatar_url}
+                                alt={member.full_name || "کاربر"}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <UserIcon className="w-5 h-5 text-emerald-700" />
+                            )}
+                          </div>
+
+                          <div className="min-w-0">
+                            <p className="text-xs font-black text-slate-900 truncate">
+                              {member.full_name || "کاربر بدون نام"}
+                            </p>
+
+                            {member.email && (
+                              <p className="text-[11px] text-slate-500 truncate">
+                                {member.email}
+                              </p>
+                            )}
+
+                            <p className="text-[11px] text-slate-500 truncate">
+                              {member.job_title || "بدون سمت"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <select
+                          value={member.role || "manager"}
+                          disabled={isUpdating}
+                          onChange={(e) =>
+                            handleRoleChange(member.id, e.target.value)
+                          }
+                          className="shrink-0 rounded-lg border-2 border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800 outline-none focus:border-amber-400 disabled:opacity-50"
+                        >
+                          <option value="manager">مدیر بخش</option>
+                          <option value="ceo">مدیرعامل</option>
+                          <option value="superadmin">سوپر ادمین</option>
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isGameOpen && (
+        <PacManGame onClose={() => setIsGameOpen(false)} />
       )}
     </div>
   );
