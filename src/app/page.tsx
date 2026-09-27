@@ -26,13 +26,21 @@ import {
 interface Task {
   id: string;
   user_id: string;
+  created_by: string;
   title: string;
   description: string | null;
   priority: "low" | "medium" | "high";
   status: "pending" | "in_progress" | "completed";
-  department: string;
-  assignee: string | null;
+  task_type: string;
+  department_id: string | null;
+  assigned_to: string | null;
+  is_completed: boolean;
   created_at: string;
+}
+
+interface Department {
+  id: string;
+  name: string;
 }
 
 interface Profile {
@@ -44,6 +52,46 @@ interface Profile {
   is_admin?: boolean;
   email?: string;
 }
+// --- توابع نوتیفیکیشن و صدا ---
+const requestNotificationPermission = async () => {
+  if (typeof window !== "undefined" && "Notification" in window) {
+    if (Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+  }
+};
+
+const playAlertSound = () => {
+  try {
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.15); // A5
+
+    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.6);
+  } catch (err) {
+    console.error("Audio error:", err);
+  }
+};
+
+const showDesktopNotification = (title: string, body: string) => {
+  if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+    new Notification(title, {
+      body: body,
+      icon: "/favicon.ico",
+    });
+  }
+};
 
 const ROLE_BADGES: Record<string, { label: string; color: string; icon: string }> = {
   superadmin: {
@@ -138,6 +186,7 @@ const DEPARTMENTS = [
     active: "bg-purple-500 text-white border-purple-600 shadow-[0_4px_16px_rgba(168,85,247,0.35)]",
     idle: "bg-slate-50 text-slate-700 border-slate-200 hover:bg-purple-50/80 hover:text-purple-800 hover:border-purple-300 hover:shadow-[0_0_15px_rgba(192,132,252,0.3)]"
   },
+  
   {
     id: "rnd",
     label: "تحقیق و توسعه (R & D)",
@@ -154,13 +203,17 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentLoadError, setDepartmentLoadError] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [selectedDept, setSelectedDept] = useState("all");
   const [isGameOpen, setIsGameOpen] = useState(false);
 
   const [taskTitle, setTaskTitle] = useState("");
-  const [taskDept, setTaskDept] = useState("production");
+  const [taskDept, setTaskDept] = useState("");
   const [taskAssignee, setTaskAssignee] = useState("");
+  const [assigneeProfiles, setAssigneeProfiles] = useState<Pick<Profile, "id" | "full_name" | "email">[]>([]);
+  const [assigneeLoadError, setAssigneeLoadError] = useState(false);
   const [taskPriority, setTaskPriority] = useState<"low" | "medium" | "high">("medium");
   const [taskDesc, setTaskDesc] = useState("");
   const [submittingTask, setSubmittingTask] = useState(false);
@@ -195,6 +248,22 @@ export default function DashboardPage() {
           setEditJobTitle(pData.job_title || "");
           setAvatarPreview(pData.avatar_url || null);
         }
+        const { data: members, error: membersError } = await supabase
+          .from("profiles")
+          .select("id, full_name, email")
+          .order("full_name", { ascending: true });
+        if (isMounted) {
+          setAssigneeProfiles(membersError ? [] : (members || []));
+          setAssigneeLoadError(!!membersError);
+        }
+        const { data: departmentData, error: departmentError } = await supabase
+          .from("departments")
+          .select("id, name")
+          .order("created_at", { ascending: true });
+        if (isMounted) {
+          setDepartments(departmentError ? [] : (departmentData || []));
+          setDepartmentLoadError(!!departmentError);
+        }
         const { data: tData } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
         if (isMounted && tData) setTasks(tData);
       } catch (err) {
@@ -206,6 +275,45 @@ export default function DashboardPage() {
     loadData();
     return () => { isMounted = false; };
   }, [router]);
+    // هوک گوش دادن لحظه‌ای به تسک‌های جدید
+  useEffect(() => {
+    if (!profile?.id) return;
+
+    // درخواست دسترسی اعلان لپ‌تاپ
+    requestNotificationPermission();
+
+    const channel = supabase
+      .channel("realtime-tasks-channel")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "tasks",
+        },
+        (payload) => {
+          const newTask = payload.new as any;
+
+          // به روزرسانی آنی لیست تسک‌ها روی صفحه
+          setTasks((prev) => [newTask, ...prev]);
+
+          // اگر تسک برای همین کاربر جاری بود -> پخش صدا و نوتیفیکیشن دسکتاپ
+          if (newTask.assigned_to === profile.id) {
+            playAlertSound();
+            showDesktopNotification(
+              "🔔 تسک جدید به شما محول شد!",
+              `عنوان: ${newTask.title || "بدون عنوان"}`
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile?.id]);
+
 
   const handleFetchAllProfiles = async () => {
     setLoadingProfiles(true);
@@ -258,15 +366,29 @@ export default function DashboardPage() {
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!taskTitle.trim()) return;
+    if (!taskDept && !taskAssignee) {
+      alert("لطفاً دپارتمان یا مسئول تسک را انتخاب کنید.");
+      return;
+    }
+    const assigneeProfile = assigneeProfiles.find((member) => member.id === taskAssignee);
+    if (taskAssignee && !assigneeProfile) {
+      alert("مسئول انتخاب‌شده در فهرست کاربران پیدا نشد.");
+      return;
+    }
+    if (taskDept && !departments.some((department) => department.id === taskDept)) {
+      alert("دپارتمان انتخاب‌شده در فهرست دپارتمان‌ها پیدا نشد.");
+      return;
+    }
     setSubmittingTask(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("کاربر لاگین نیست");
       const newTask = {
         user_id: user.id,
+        created_by: user.id,
         title: taskTitle.trim(),
-        department: taskDept,
-        assignee: taskAssignee.trim() || null,
+        department_id: taskDept || null,
+        assigned_to: taskAssignee || null,
         priority: taskPriority,
         description: taskDesc.trim() || null,
         status: "pending" as const
@@ -275,6 +397,20 @@ export default function DashboardPage() {
       if (error) throw error;
       if (data) {
         setTasks((prev) => [data, ...prev]);
+                // ارسال اعلان ایمیلی به API
+        fetch('/api/send-task-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            taskTitle: newTask.title,
+            taskDescription: newTask.description,
+            priority: newTask.priority,
+            departmentId: newTask.department_id,
+            assigneeName: assigneeProfile?.full_name?.trim() || assigneeProfile?.email || null,
+            createdByName: profile?.full_name || 'کاربر سیستم',
+          }),
+        }).catch((err) => console.error("خطا در ارسال ایمیل:", err));
+
         setTaskTitle("");
         setTaskDesc("");
         setTaskAssignee("");
@@ -338,7 +474,15 @@ export default function DashboardPage() {
     }
   };
 
-  const filteredTasks = tasks.filter((t) => selectedDept === "all" || t.department === selectedDept);
+  const filteredTasks = tasks.filter((t) => selectedDept === "all" || t.department_id === selectedDept);
+  const sidebarDepartments = [
+    DEPARTMENTS[0],
+    ...departments.map((department, index) => ({
+      ...(DEPARTMENTS.find((item) => item.id !== "all" && item.label.replace(/\s+/g, "") === department.name.replace(/\s+/g, "")) || DEPARTMENTS[index + 1] || DEPARTMENTS[1]),
+      id: department.id,
+      label: department.name
+    }))
+  ];
   const activeRoleBadge = getRoleBadge(profile);
   const canAccessAdmin = isSuperAdminUser(profile);
 
@@ -400,7 +544,7 @@ export default function DashboardPage() {
             {canAccessAdmin && (
               <button
                 type="button"
-                onClick={handleOpenAdminModal}
+                onClick={() => router.push("/admin")}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border-2 border-amber-400/60 text-xs font-black shadow-[0_2px_0_0_#f59e0b] hover:shadow-[0_0_18px_rgba(245,158,11,0.4)] hover:-translate-y-0.5 transition-all duration-300 cursor-pointer"
               >
                 <Crown className="w-4 h-4 text-amber-600" />
@@ -445,13 +589,10 @@ export default function DashboardPage() {
                       onChange={(e) => setTaskDept(e.target.value)}
                       className="w-full bg-slate-50/80 border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-950 focus:border-[#00875A] focus:outline-none cursor-pointer"
                     >
-                      <option value="production">⚙️ گروه تولید</option>
-                      <option value="qc">🔍 کنترل کیفیت (QC)</option>
-                      <option value="qa">📋 تضمین کیفیت (QA)</option>
-                      <option value="warehouse">📦 انبار و لجستیک</option>
-                      <option value="finance">💰 حسابداری و مالی</option>
-                      <option value="hr">👥 امور اداری و منابع انسانی</option>
-                      <option value="rnd">🔬 تحقیق و توسعه (R & D)</option>
+                      <option value="">{departmentLoadError ? "خطا در دریافت دپارتمان‌ها" : "انتخاب دپارتمان (اختیاری)"}</option>
+                      {departments.map((department) => (
+                        <option key={department.id} value={department.id}>{department.name}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -459,12 +600,18 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
                   <div>
                     <label className="block text-xs text-slate-900 mb-1 font-black">ارجاع به مسئول</label>
-                    <input
-                      type="text"
+                    <select
                       value={taskAssignee}
                       onChange={(e) => setTaskAssignee(e.target.value)}
-                      className="w-full bg-slate-50/80 border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-950 focus:border-[#00875A] focus:outline-none transition-colors"
-                    />
+                      className="w-full bg-slate-50/80 border-2 border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold text-slate-950 focus:border-[#00875A] focus:outline-none cursor-pointer"
+                    >
+                      <option value="">{assigneeLoadError ? "خطا در دریافت فهرست افراد" : assigneeProfiles.length ? "انتخاب مسئول (اختیاری)" : "کاربری یافت نشد"}</option>
+                      {assigneeProfiles.map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.full_name?.trim() || member.email || "بدون نام"}{member.full_name?.trim() && member.email ? ` (${member.email})` : ""}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   
                   <div>
@@ -578,10 +725,10 @@ export default function DashboardPage() {
                 <span className="text-xs px-2.5 py-0.5 rounded-lg bg-emerald-100 text-emerald-950 font-black">{tasks.length} تسک</span>
               </div>
               <div className="space-y-2 pt-2.5">
-                {DEPARTMENTS.map((dept) => {
+                {sidebarDepartments.map((dept) => {
                   const Icon = dept.icon;
                   const isSelected = selectedDept === dept.id;
-                  const count = dept.id === "all" ? tasks.length : tasks.filter((t) => t.department === dept.id).length;
+                  const count = dept.id === "all" ? tasks.length : tasks.filter((t) => t.department_id === dept.id).length;
                   return (
                     <button
                       key={dept.id}
@@ -636,7 +783,7 @@ export default function DashboardPage() {
                 type="button"
                 onClick={() => setIsEditProfileOpen(false)}
                 className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 cursor-pointer transition-colors"
-                aria-label="بستن"
+                aria-label='بستن'
               >
                 <X className="w-5 h-5" />
               </button>
@@ -740,7 +887,7 @@ export default function DashboardPage() {
                 type="button"
                 onClick={() => setIsAdminModalOpen(false)}
                 className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                aria-label="بستن"
+                aria-label='بستن'
               >
                 <X className="w-4 h-4" />
               </button>
