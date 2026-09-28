@@ -17,6 +17,13 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // استیت‌های مربوط به مدال فراموشی رمز
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState('');
+  const [forgotError, setForgotError] = useState('');
+
   // بازیابی ایمیل ذخیره‌شده
   useEffect(() => {
     const savedEmail = localStorage.getItem('rememberedEmail');
@@ -112,6 +119,33 @@ export default function LoginPage() {
     }
   };
 
+  // هندلر ارسال لینک بازنشانی رمز
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotLoading(true);
+    setForgotMsg('');
+    setForgotError('');
+
+    try {
+      const redirectUrl =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}/reset-password`
+          : 'https://planner-lilac-mu.vercel.app/reset-password';
+
+      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim(), {
+        redirectTo: redirectUrl,
+      });
+
+      if (error) throw error;
+
+      setForgotMsg('لینک بازیابی رمز عبور به ایمیل شما ارسال شد. لطفاً Inbox و پوشه اسپم را چک کنید.');
+    } catch (err: any) {
+      setForgotError(err.message || 'خطا در ارسال ایمیل بازیابی.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-200 via-slate-100 to-emerald-100/60 flex flex-col items-center justify-center p-4 relative overflow-hidden [perspective:1400px]" dir="rtl">
       {/* Background Glows */}
@@ -135,22 +169,22 @@ export default function LoginPage() {
               <div className="absolute inset-0 w-full h-full rounded-full bg-gradient-to-b from-white via-white/95 to-slate-50/90 backdrop-blur-2xl p-6 sm:p-12 flex flex-col items-center justify-center shadow-[inset_0_12px_24px_-6px_rgba(0,135,90,0.12),inset_0_-8px_16px_rgba(0,0,0,0.04)] [backface-visibility:hidden]">
                 
                 {/* 3D Floating Icon */}
-                <div className="text-center mb-3 sm:mb-4">
-                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-b from-emerald-500 to-[#00875A] rounded-2xl mx-auto mb-2 flex items-center justify-center border-t border-emerald-300 shadow-[0_8px_20px_-4px_rgba(0,135,90,0.45)]">
-                    <span className="text-2xl filter drop-shadow-md">🧬</span>
+                <div className="text-center mb-2 sm:mb-3">
+                  <div className="w-11 h-11 sm:w-14 sm:h-14 bg-gradient-to-b from-emerald-500 to-[#00875A] rounded-2xl mx-auto mb-1.5 flex items-center justify-center border-t border-emerald-300 shadow-[0_8px_20px_-4px_rgba(0,135,90,0.45)]">
+                    <span className="text-xl sm:text-2xl filter drop-shadow-md">🧬</span>
                   </div>
-                  <h1 className="text-lg sm:text-xl font-black text-slate-800 tracking-tight">ورود به سامانه</h1>
-                  <p className="text-[11px] font-semibold text-slate-400 mt-0.5">اطلاعات حساب کاربری خود را وارد کنید</p>
+                  <h1 className="text-base sm:text-xl font-black text-slate-800 tracking-tight">ورود به سامانه</h1>
+                  <p className="text-[10px] sm:text-[11px] font-semibold text-slate-400 mt-0.5">اطلاعات حساب کاربری خود را وارد کنید</p>
                 </div>
 
                 {errorMsg && isLogin && (
-                  <div className="w-full max-w-xs mb-2.5 p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-[11px] flex items-center gap-1.5 shadow-sm">
+                  <div className="w-full max-w-xs mb-2 p-1.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-[10px] sm:text-[11px] flex items-center gap-1.5 shadow-sm">
                     <span>⚠️</span>
                     <span>{errorMsg}</span>
                   </div>
                 )}
 
-                <form onSubmit={handleSubmit} className="w-full max-w-xs space-y-2.5 sm:space-y-3">
+                <form onSubmit={handleSubmit} className="w-full max-w-xs space-y-2 sm:space-y-2.5">
                   <div>
                     <input
                       type="email"
@@ -158,7 +192,7 @@ export default function LoginPage() {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="ایمیل سازمانی (user@company.com)"
-                      className="w-full px-3.5 py-2 sm:py-2.5 bg-slate-50/90 border border-slate-200 rounded-xl text-slate-800 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-[#00875A] focus:ring-2 focus:ring-[#00875A]/20 transition-all text-xs text-left shadow-[inset_0_2px_4px_rgba(0,0,0,0.04)]"
+                      className="w-full px-3.5 py-1.5 sm:py-2.5 bg-slate-50/90 border border-slate-200 rounded-xl text-slate-800 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-[#00875A] focus:ring-2 focus:ring-[#00875A]/20 transition-all text-xs text-left shadow-[inset_0_2px_4px_rgba(0,0,0,0.04)]"
                       dir="ltr"
                     />
                   </div>
@@ -170,14 +204,14 @@ export default function LoginPage() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="رمز عبور"
-                      className="w-full pl-10 pr-3.5 py-2 sm:py-2.5 bg-slate-50/90 border border-slate-200 rounded-xl text-slate-800 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-[#00875A] focus:ring-2 focus:ring-[#00875A]/20 transition-all text-xs text-left shadow-[inset_0_2px_4px_rgba(0,0,0,0.04)]"
+                      className="w-full pl-10 pr-3.5 py-1.5 sm:py-2.5 bg-slate-50/90 border border-slate-200 rounded-xl text-slate-800 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-[#00875A] focus:ring-2 focus:ring-[#00875A]/20 transition-all text-xs text-left shadow-[inset_0_2px_4px_rgba(0,0,0,0.04)]"
                       dir="ltr"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-emerald-700 p-1 transition-colors focus:outline-none"
-                      aria-label={showPassword ? 'مخفی کردن رمز' : 'نمایش رمز'}
+                      aria-label={showPassword ? 'مخفی کردن رمز' : 'GAPGPTMASKTOKENfvcgtfos0reX0X'}
                     >
                       {showPassword ? (
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
@@ -192,29 +226,45 @@ export default function LoginPage() {
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2 mr-1">
-                    <input
-                      type="checkbox"
-                      id="rememberMeLogin"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      className="w-3.5 h-3.5 rounded border-slate-300 text-[#00875A] cursor-pointer accent-[#00875A]"
-                    />
-                    <label htmlFor="rememberMeLogin" className="text-[11px] font-semibold text-slate-500 cursor-pointer select-none">
-                      مرا به خاطر بسپار
-                    </label>
+                  {/* مرا به خاطر بسپار و فراموشی رمز عبور */}
+                  <div className="flex items-center justify-between px-1 text-[11px]">
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        id="rememberMeLogin"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        className="w-3.5 h-3.5 rounded border-slate-300 text-[#00875A] cursor-pointer accent-[#00875A]"
+                      />
+                      <label htmlFor="rememberMeLogin" className="font-semibold text-slate-500 cursor-pointer select-none">
+                        مرا به خاطر بسپار
+                      </label>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotEmail(email);
+                        setShowForgotModal(true);
+                        setForgotMsg('');
+                        setForgotError('');
+                      }}
+                      className="font-bold text-[#00875A] hover:underline transition-colors"
+                    >
+                      فراموشی رمز؟
+                    </button>
                   </div>
 
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full py-2.5 bg-gradient-to-b from-[#009b67] to-[#00875A] hover:from-[#00875A] hover:to-[#00734c] active:translate-y-0.5 text-white font-bold rounded-xl border-t border-emerald-300/40 border-b-2 border-[#006040] shadow-[0_8px_16px_-4px_rgba(0,135,90,0.4)] transition-all disabled:opacity-50 text-xs"
+                    className="w-full py-2 sm:py-2.5 bg-gradient-to-b from-[#009b67] to-[#00875A] hover:from-[#00875A] hover:to-[#00734c] active:translate-y-0.5 text-white font-bold rounded-xl border-t border-emerald-300/40 border-b-2 border-[#006040] shadow-[0_8px_16px_-4px_rgba(0,135,90,0.4)] transition-all disabled:opacity-50 text-xs"
                   >
                     {loading ? 'در حال ورود...' : 'ورود به حساب'}
                   </button>
                 </form>
 
-                <div className="mt-3 text-center">
+                <div className="mt-2.5 sm:mt-3 text-center">
                   <button
                     type="button"
                     onClick={() => {
@@ -232,7 +282,7 @@ export default function LoginPage() {
               {/* =================== پشت دایره: فرم ثبت‌نام (REGISTER) =================== */}
               <div className="absolute inset-0 w-full h-full rounded-full bg-gradient-to-b from-white via-white/95 to-slate-50/90 backdrop-blur-2xl p-6 sm:p-10 flex flex-col items-center justify-center shadow-[inset_0_12px_24px_-6px_rgba(13,148,136,0.12),inset_0_-8px_16px_rgba(0,0,0,0.04)] [transform:rotateY(180deg)] [backface-visibility:hidden]">
                 
-                <div className="text-center mb-2.5 sm:mb-3">
+                <div className="text-center mb-2 sm:mb-2.5">
                   <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-b from-teal-500 to-emerald-600 rounded-2xl mx-auto mb-1 flex items-center justify-center border-t border-teal-300 shadow-[0_8px_20px_-4px_rgba(13,148,136,0.45)]">
                     <span className="text-xl filter drop-shadow-md">✨</span>
                   </div>
@@ -254,7 +304,7 @@ export default function LoginPage() {
                   </div>
                 )}
 
-                <form onSubmit={handleSubmit} className="w-full max-w-xs space-y-2">
+                <form onSubmit={handleSubmit} className="w-full max-w-xs space-y-1.5 sm:space-y-2">
                   <input
                     type="text"
                     required
@@ -338,6 +388,69 @@ export default function LoginPage() {
           </div>
         </div>
       </div>
+
+      {/* مودال فراموشی رمز عبور */}
+      {showForgotModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 relative">
+            <button
+              onClick={() => setShowForgotModal(false)}
+              className="absolute top-4 left-4 text-slate-400 hover:text-slate-600 text-lg font-bold"
+            >
+              ✕
+            </button>
+
+            <div className="text-center mb-4">
+              <div className="w-12 h-12 bg-emerald-50 rounded-2xl mx-auto mb-2 flex items-center justify-center text-2xl border border-emerald-100 text-[#00875A]">
+                🔑
+              </div>
+              <h2 className="text-base font-bold text-slate-800">بازیابی رمز عبور</h2>
+              <p className="text-xs text-slate-500 mt-1">ایمیل حساب خود را وارد کنید تا لینک تغییر رمز برایتان ارسال شود.</p>
+            </div>
+
+            {forgotError && (
+              <div className="mb-3 p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-xs text-center">
+                {forgotError}
+              </div>
+            )}
+
+            {forgotMsg && (
+              <div className="mb-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[#00875A] text-xs text-center leading-relaxed">
+                {forgotMsg}
+              </div>
+            )}
+
+            {!forgotMsg ? (
+              <form onSubmit={handleForgotPassword} className="space-y-3">
+                <input
+                  type="email"
+                  required
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="user@company.com"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder:text-slate-400 focus:outline-none focus:bg-white focus:border-[#00875A] focus:ring-2 focus:ring-[#00875A]/20 transition-all text-xs text-left"
+                  dir="ltr"
+                />
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  className="w-full py-2.5 bg-[#00875A] hover:bg-[#00734c] text-white font-bold rounded-xl transition-all disabled:opacity-50 text-xs shadow-md shadow-[#00875A]/30"
+                >
+                  {forgotLoading ? 'در حال ارسال...' : 'ارسال لینک بازیابی'}
+                </button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowForgotModal(false)}
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-all text-xs mt-2"
+              >
+                بستن
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Floating Logo Below Circle */}
       <div className="mt-6 flex justify-center relative z-10">
