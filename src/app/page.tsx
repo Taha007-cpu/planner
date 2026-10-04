@@ -37,6 +37,9 @@ interface Task {
   assigned_to: string | null;
   is_completed: boolean;
   created_at: string;
+  creator?: { full_name: string } | null;
+  assignee?: { full_name: string } | null;
+  dept?: { name: string } | null;
 }
 
 interface Department {
@@ -265,8 +268,16 @@ export default function DashboardPage() {
           setDepartments(departmentError ? [] : (departmentData || []));
           setDepartmentLoadError(!!departmentError);
         }
-        const { data: tData } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
-        if (isMounted && tData) setTasks(tData);
+        const { data: tData } = await supabase
+  .from("tasks")
+  .select(`
+    *,
+    creator:profiles!tasks_created_by_fkey(full_name),
+    assignee:profiles!tasks_assigned_to_fkey(full_name),
+    dept:departments!tasks_department_id_fkey(name)
+  `)
+  .order("created_at", { ascending: false });
+
       } catch (err) {
         console.error(err);
       } finally {
@@ -396,8 +407,19 @@ export default function DashboardPage() {
       };
       const { data, error } = await supabase.from("tasks").insert([newTask]).select().single();
       if (error) throw error;
-      if (data) {
-        setTasks((prev) => [data, ...prev]);
+          if (data) {
+      const selectedDept = departments.find((d) => d.id === taskDept);
+
+      setTasks((prev) => [
+        {
+          ...data,
+          creator: profile ? { full_name: profile.full_name } : null,
+          assignee: assigneeProfile ? { full_name: assigneeProfile.full_name } : null,
+          dept: selectedDept ? { name: selectedDept.name } : null,
+        },
+        ...prev,
+      ]);
+
                 // ارسال اعلان ایمیلی به API
         fetch('/api/send-task-email', {
           method: 'POST',
@@ -725,6 +747,50 @@ const handleToggleTaskStatus = async (taskId: string, currentStatus: string) => 
       >
         <Check className="w-4 h-4 stroke-[3]" />
       </button>
+      <div>
+  {/* تیتر تسک */}
+  <div className="flex items-center gap-2">
+    <span
+      className={`text-sm font-medium ${
+        t.status === "completed"
+          ? "line-through text-slate-400"
+          : "text-slate-800"
+      }`}
+    >
+      {t.title}
+    </span>
+
+    {/* بج نام تعریف‌کننده */}
+    {t.creator?.full_name && (
+      <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600 border border-slate-200">
+        <span className="text-slate-400 text-[10px]">ثبت:</span>
+        {t.creator.full_name}
+      </span>
+    )}
+
+    {/* بج شخص ارجاع‌شده */}
+    {t.assignee?.full_name && (
+      <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-xs text-indigo-600 border border-indigo-200">
+        <span className="text-indigo-400 text-[10px]">ارجاع:</span>
+        {t.assignee.full_name}
+      </span>
+    )}
+
+    {/* بج دپارتمان (در صورتی که به شخص خاصی ارجاع نشده باشد) */}
+    {!t.assignee && t.dept?.name && (
+      <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-xs text-indigo-600 border border-indigo-200">
+        <span className="text-indigo-400 text-[10px]">دپارتمان:</span>
+        {t.dept.name}
+      </span>
+    )}
+  </div>
+
+  {/* توضیحات تسک (اگه از قبل داری) */}
+  {t.description && (
+    <p className="text-xs text-slate-500 mt-0.5">{t.description}</p>
+  )}
+</div>
+
 
       <div>
         <div className="flex items-center gap-2 mb-1">
