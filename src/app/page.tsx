@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import PacManGame from "@/components/PacManGame";
+import { Check} from "lucide-react";
 import {
   LogOut,
   Edit2,
@@ -421,6 +422,25 @@ export default function DashboardPage() {
       setSubmittingTask(false);
     }
   };
+const handleToggleTaskStatus = async (taskId: string, currentStatus: string) => {
+  const newStatus = currentStatus === "completed" ? "pending" : "completed";
+
+  try {
+    const { error } = await supabase
+      .from("tasks")
+      .update({ status: newStatus })
+      .eq("id", taskId);
+
+    if (error) throw error;
+
+    setTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t))
+    );
+  } catch (err: any) {
+    console.error("خطا در تغییر وضعیت تسک:", err);
+    alert("تغییر وضعیت تسک انجام نشد.");
+  }
+};
 
   const handleDeleteTask = async (taskId: string) => {
     try {
@@ -689,30 +709,60 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {filteredTasks.map((t) => (
-                    <div key={t.id} className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between shadow-sm">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-black text-slate-900">{t.title}</span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-lg font-black ${
-                            t.priority === "high" ? "bg-rose-100 text-rose-800" : 
-                            t.priority === "medium" ? "bg-amber-100 text-amber-800" : 
-                            "bg-sky-100 text-sky-800"
-                          }`}>
-                            {t.priority === "high" ? "🚨 فوری" : t.priority === "medium" ? "⚡ متوسط" : "📌 عادی"}
-                          </span>
-                        </div>
-                        {t.description && <p className="text-xs font-semibold text-slate-700">{t.description}</p>}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteTask(t.id)}
-                        className="p-2 text-slate-400 hover:text-rose-600 cursor-pointer transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
+                  
+                 {filteredTasks.map((t) => (
+  <div key={t.id} className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between shadow-sm">
+    <div className="flex items-center gap-3">
+      {/* دکمه تیک و تکمیل تسک */}
+      <button
+        type="button"
+        onClick={() => handleToggleTaskStatus(t.id, t.status)}
+        className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all cursor-pointer ${
+          t.status === "completed"
+            ? "bg-emerald-500 border-emerald-500 text-white shadow-sm"
+            : "border-slate-300 hover:border-emerald-500 text-transparent"
+        }`}
+      >
+        <Check className="w-4 h-4 stroke-[3]" />
+      </button>
+
+      <div>
+        <div className="flex items-center gap-2 mb-1">
+          <span className={`text-sm font-black transition-all ${
+            t.status === "completed" ? "line-through text-slate-400" : "text-slate-900"
+          }`}>
+            {t.title}
+          </span>
+          <span className={`text-[10px] px-2 py-0.5 rounded-lg font-black ${
+            t.priority === "high" ? "bg-rose-100 text-rose-800" :
+            t.priority === "medium" ? "bg-amber-100 text-amber-800" :
+            "bg-sky-100 text-sky-800"
+          }`}>
+            {t.priority === "high" ? "🚨 فوری" : t.priority === "medium" ? "⚡ متوسط" : "📌 عادی"}
+          </span>
+        </div>
+        {t.description && (
+          <p className={`text-xs font-semibold ${
+            t.status === "completed" ? "line-through text-slate-400" : "text-slate-700"
+          }`}>
+            {t.description}
+          </p>
+        )}
+      </div>
+    </div>
+
+    {/* دکمه حذف */}
+    <button
+      type="button"
+      onClick={() => handleDeleteTask(t.id)}
+      className="p-2 text-slate-400 hover:text-rose-600 cursor-pointer transition-colors"
+    >
+      <Trash2 className="w-4 h-4" />
+    </button>
+  </div>
+))}
+
+                  
                 </div>
               )}
             </div>
