@@ -516,7 +516,12 @@ const handleToggleTaskStatus = async (taskId: string, currentStatus: string) => 
     }
   };
 
-  const filteredTasks = tasks.filter((t) => selectedDept === "all" || t.department_id === selectedDept);
+    const filteredTasks = tasks.filter(
+  (t) =>
+    (selectedDept === "all" || t.department_id === selectedDept) &&
+    (t.assigned_to === profile?.id || t.created_by === profile?.id || t.user_id === profile?.id)
+);
+
   const sidebarDepartments = [
     DEPARTMENTS[0],
     ...departments.map((department, index) => ({
@@ -525,6 +530,7 @@ const handleToggleTaskStatus = async (taskId: string, currentStatus: string) => 
       label: department.name
     }))
   ];
+
   const activeRoleBadge = getRoleBadge(profile);
   const canAccessAdmin = isSuperAdminUser(profile);
 
