@@ -371,9 +371,9 @@ export default function DashboardPage() {
   };
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    startTransition(() => router.push("/auth/login"));
-  };
+  await supabase.auth.signOut();
+  startTransition(() => router.push("/login"));
+};
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
