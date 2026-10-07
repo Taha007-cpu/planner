@@ -240,10 +240,11 @@ export default function DashboardPage() {
     async function loadData() {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
-        if (error || !session) {
-          startTransition(() => router.push("/auth/login"));
-          return;
-        }
+if (error || !session) {
+  startTransition(() => router.push("/login"));
+  return;
+}
+
         if (isMounted) setUserEmail(session.user.email ?? null);
         const { data: pData } = await supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
         if (isMounted && pData) {
